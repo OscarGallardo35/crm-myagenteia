@@ -1,0 +1,57 @@
+from django.db import models
+from django.contrib.auth.models import User
+
+class AgentTask(models.Model):
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('running', 'Running'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+        ('cancelled', 'Cancelled'),
+    ]
+    PRIORITY_CHOICES = [
+        ('low', 'Low'),
+        ('medium', 'Medium'),
+        ('high', 'High'),
+        ('urgent', 'Urgent'),
+    ]
+
+    name = models.CharField(max_length=200)
+    description = models.TextField(blank=True, null=True)
+    agent_type = models.CharField(max_length=100)  # e.g., 'researcher', 'poster', etc.
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    priority = models.CharField(max_length=20, choices=PRIORITY_CHOICES, default='medium')
+    assigned_to = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='agent_tasks')
+    created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='created_agent_tasks')
+    # Input data for the task (JSON)
+    input_data = models.JSONField(default=dict, blank=True)
+    # Output/result of the task
+    output_data = models.JSONField(default=dict, blank=True, null=True)
+    # Logs or error messages
+    logs = models.TextField(blank=True, null=True)
+    started_at = models.DateTimeField(blank=True, null=True)
+    completed_at = models.DateTimeField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.name
+
+class AgentLog(models.Model):
+    LOG_LEVEL_CHOICES = [
+        ('debug', 'Debug'),
+        ('info', 'Info'),
+        ('warning', 'Warning'),
+        ('error', 'Error'),
+        ('critical', 'Critical'),
+    ]
+
+    agent_task = models.ForeignKey(AgentTask, on_delete=models.CASCADE, related_name='logs')
+    level = models.CharField(max_length=20, choices=LOG_LEVEL_CHOICES)
+    message = models.TextField()
+    timestamp = models.DateTimeField(auto_now_add=True)
+    # Optional: traceback for errors
+    traceback = models.TextField(blank=True, null=True)
+
+    def __str__(self):
+        return f"{self.agent_task.name} - {self.level}: {self.message[:50]}"

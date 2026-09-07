@@ -1,0 +1,1 @@
+module.exports = {\n  darkMode: 'class',\n  content: ['./index.html', './src/**/*.{js,ts,jsx,txs}'],\n  theme: {\n    extend: {\n      colors: {\n        neon: {\n          cyan: '#00ffff',\n          pink: '#ff00ff',\n          green: '#00ff00',\n          blue: '#0000ff',\n        },\n      },\n    },\n  },\n  plugins: [],\n}
