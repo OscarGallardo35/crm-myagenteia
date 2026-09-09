@@ -31,6 +31,7 @@ services:
     volumes:
       - /root/.hermes:/hermes:ro
       - /var/log:/var/log/hostlogs:ro
+      - ./media:/app/media
     environment:
       DB_NAME: myagenteia_crm
       DB_USER: postgres

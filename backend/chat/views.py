@@ -1,7 +1,10 @@
 from rest_framework import viewsets, status
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, parser_classes
 from rest_framework.response import Response
+from rest_framework.parsers import MultiPartParser, FormParser
 from django.contrib.auth.models import User
+from django.utils import timezone
+from django.conf import settings
 from chat.models import Conversation, Message, ModelConfig
 from agents.models import AgentTask, AgentLog
 from leads.models import Lead, Deal
@@ -664,7 +667,10 @@ def _build_history(conversation_pk, user_content):
     if convo:
         for mm in convo.messages.order_by('created_at')[:12]:
             if mm.role in ('user', 'assistant'):
-                history.append({'role': mm.role, 'content': mm.content})
+                entry = {'role': mm.role, 'content': mm.content}
+                if mm.attachments:
+                    entry['attachments'] = mm.attachments
+                history.append(entry)
     if not history or history[-1]['role'] != 'user':
         history.append({'role': 'user', 'content': user_content})
     return history or [{'role': 'user', 'content': user_content}]
@@ -690,3 +696,89 @@ def _ask_proxy_nous(user_id, conversation_pk, user_content, requested_model=None
         return content
     except Exception:
         return None
+
+
+# ---- Multimedia: preparación de contenido y upload ----
+
+def _prepare_user_content(message):
+    """Convierte un Message (texto + attachments) en el texto que el agente procesa."""
+    parts = []
+    if message.content:
+        parts.append(message.content)
+    for att in (message.attachments or []):
+        att_type = att.get('type', '')
+        att_name = att.get('name', 'archivo')
+        att_url = att.get('url', '')
+        if att_url.startswith('/media/'):
+            file_path = os.path.join(settings.MEDIA_ROOT, att_url[len('/media/'):])
+        else:
+            file_path = att_url
+        if att_type == 'audio':
+            from chat.extractors import transcribe_audio
+            transcription = transcribe_audio(file_path)
+            parts.append(f"[Nota de voz transcrita]: {transcription}" if transcription else f"[Nota de voz: {att_name}]")
+        elif att_type == 'document':
+            from chat.extractors import extract_document_text
+            text = extract_document_text(file_path, att.get('mime', ''))
+            parts.append(f"[Documento: {att_name}]\n{text}" if text else f"[Documento: {att_name}]")
+        elif att_type == 'image':
+            from chat.extractors import ocr_image
+            text = ocr_image(file_path)
+            parts.append(f"[Imagen: {att_name}]\n{text}" if text else f"[Imagen: {att_name}]")
+    return "\n\n".join(parts)
+
+
+@api_view(['POST'])
+@parser_classes([MultiPartParser, FormParser])
+def crm_conversation_upload(request, pk):
+    """Sube archivos (audio/documento/imagen) y crea el mensaje del usuario."""
+    try:
+        c = Conversation.objects.get(pk=pk, user=request.user)
+    except Conversation.DoesNotExist:
+        return Response({'ok': False, 'error': 'Conversación no encontrada'}, status=404)
+    files = request.FILES.getlist('files')
+    content = request.data.get('content', '')
+    attachment_type = request.data.get('type', 'document')
+    if not files and not content:
+        return Response({'ok': False, 'error': 'Enviá un archivo o un mensaje'}, status=400)
+    attachments = []
+    for f in files:
+        mime = f.content_type or 'application/octet-stream'
+        folder = os.path.join(settings.MEDIA_ROOT, f'{attachment_type}s', str(pk))
+        os.makedirs(folder, exist_ok=True)
+        ts = int(timezone.now().timestamp())
+        safe_name = f"{ts}_{f.name}"
+        file_path = os.path.join(folder, safe_name)
+        with open(file_path, 'wb') as dest:
+            for chunk in f.chunks():
+                dest.write(chunk)
+        thumb_url = None
+        if attachment_type == 'image' and mime.startswith('image/'):
+            from chat.extractors import generate_image_thumbnail
+            thumb_path = generate_image_thumbnail(file_path)
+            if thumb_path:
+                thumb_url = f"/media/images/{pk}/{os.path.basename(thumb_path)}"
+        att = {'type': attachment_type, 'url': f"/media/{attachment_type}s/{pk}/{safe_name}",
+               'name': f.name, 'size': f.size, 'mime': mime}
+        if thumb_url:
+            att['thumbnail'] = thumb_url
+        if attachment_type == 'audio':
+            att['duration'] = request.data.get('duration', None)
+        attachments.append(att)
+    m = Message.objects.create(conversation=c, role='user', content=content,
+                               attachments=attachments if attachments else None)
+    c.save()
+    response_data = {'ok': True, 'message': {
+        'role': m.role, 'content': m.content, 'attachments': m.attachments or [],
+        'created_at': m.created_at.isoformat() if m.created_at else None,
+    }}
+    if attachments or content:
+        model = request.data.get('model') or None
+        response_data['agent_pending'] = True
+        response_data['agent_poll_path'] = f'/api/chat/conversations/{pk}/'
+        import threading
+        t = threading.Thread(target=_run_agent_background,
+                             args=(request.user.id, pk, _prepare_user_content(m), model))
+        t.daemon = True
+        t.start()
+    return Response(response_data, status=201)

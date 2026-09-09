@@ -1,6 +1,8 @@
 from django.contrib import admin
 from django.urls import path, include
 from django.http import JsonResponse
+from django.conf import settings
+from django.views.static import serve
 
 def api_root(request):
     endpoints = [
@@ -50,3 +52,14 @@ urlpatterns = [
     path('api/agents/', include('agents.urls')),
     path('api/security/', include('security.urls')),
 ]
+
+# Servir media files (adjuntos multimedia del chat)
+if settings.DEBUG:
+    from django.conf.urls.static import static
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+else:
+    # En producción, nginx proxea /media/ a Django, que sirve los archivos
+    from django.urls import re_path
+    urlpatterns += [
+        re_path(r'^media/(?P<path>.*)$', serve, {'document_root': settings.MEDIA_ROOT}),
+    ]

@@ -172,6 +172,12 @@ export const api = {
       body: JSON.stringify({ model }),
     });
   },
+  uploadCrmAttachments: async (id, formData) => {
+    return fetchWithAuth(`${API_BASE_URL}/conversations/${id}/upload/`, {
+      method: 'POST',
+      body: formData,
+    });
+  },
   deleteCrmConversation: async (id) => {
     return fetchWithAuth(`${API_BASE_URL}/conversations/${id}/`, {
       method: 'DELETE',

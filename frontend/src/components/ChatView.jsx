@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import ModelSelector from './ModelSelector';
 import MarkdownRenderer from './MarkdownRenderer';
 import ArtifactCard from './ArtifactCard';
+import AttachmentCard from './AttachmentCard';
 import { api } from '../lib/api';
 
 // Chat tipo Claude con Hermes de fondo.
@@ -53,6 +54,11 @@ const ChatView = () => {
   // Menu de la conversación activa
   const [menuOpen, setMenuOpen] = useState(false);
   const [copiedId, setCopiedId] = useState(null);
+  // Multimedia
+  const [attachments, setAttachments] = useState([]);
+  const [recording, setRecording] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef(null);
 
   const messagesEndRef = useRef(null);
   const titleInputRef = useRef(null);
@@ -148,39 +154,106 @@ const ChatView = () => {
     }
   }, [active]);
 
+  // ---- Handlers multimedia (audio, documentos, imágenes) ----
+  const handleFiles = useCallback((files, type) => {
+    const arr = Array.from(files);
+    if (!arr.length) return;
+    const previews = arr.map(f => {
+      const url = URL.createObjectURL(f);
+      return { file: f, url, name: f.name, size: f.size, type, mime: f.type };
+    });
+    setAttachments(prev => [...prev, ...previews]);
+  }, []);
+
+  const handlePaste = useCallback((e) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (file) handleFiles([file], 'image');
+        return;
+      }
+    }
+  }, [handleFiles]);
+
+  const handleDrop = useCallback((e) => {
+    e.preventDefault();
+    setDragOver(false);
+    const files = Array.from(e.dataTransfer.files);
+    if (!files.length) return;
+    // detectar tipo
+    const type = files[0].type.startsWith('image/') ? 'image'
+      : files[0].type.startsWith('audio/') ? 'audio' : 'document';
+    handleFiles(files, type);
+  }, [handleFiles]);
+
+  const startRecording = useCallback(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      const chunks = [];
+      mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(chunks, { type: 'audio/webm' });
+        const url = URL.createObjectURL(blob);
+        setAttachments(prev => [...prev, { file: blob, url, name: 'nota_voz.webm', size: blob.size, type: 'audio', mime: 'audio/webm' }]);
+        stream.getTracks().forEach(t => t.stop());
+      };
+      mediaRecorder.start();
+      setRecording(true);
+      setTimeout(() => { mediaRecorder.stop(); setRecording(false); }, 30000); // max 30s
+    } catch { /* sin micrófono */ }
+  }, []);
+
+  const removeAttachment = useCallback((idx) => {
+    setAttachments(prev => { URL.revokeObjectURL(prev[idx]?.url); return prev.filter((_, i) => i !== idx); });
+  }, []);
+
   // ---- Enviar mensaje (background job + polling: el agente corre en un hilo) ----
   const handleSend = useCallback(async (e) => {
     e.preventDefault();
     const text = input.trim();
-    if (!text || !active || active.type !== 'crm') return;
-    // longitud esperada tras agregar el mensaje del usuario (para esperar UNA respuesta nueva)
+    if ((!text && attachments.length === 0) || !active || active.type !== 'crm') return;
     const baseLen = messages.length + 1;
     setInput('');
-    setMessages((prev) => [...prev, { role: 'user', content: text }]);
+    const currentAttachments = attachments;
+    setAttachments([]);
+    setMessages(prev => [...prev, { role: 'user', content: text }]);
     setAgentWorking(true);
     setError('');
     try {
-      const chosenModel = model || '';  // si vacío, el backend usa su default (deepseek v4 flash via commandcode)
-      const data = await api.addCrmMessage(active.id, 'user', text, chosenModel);
-      if (data && data.ok) {
-        // actualizar mensaje user y preview
-        setMessages((prev) => [...prev.slice(0, -1), { role: 'user', content: text }]);
-        setCrmConvos((prev) => prev.map(c => c.id === active.id
-          ? { ...c, preview: text.slice(0, 80), message_count: (c.message_count || 0) + 1 }
+      let result;
+      if (currentAttachments.length > 0) {
+        // multipart upload
+        const fd = new FormData();
+        if (text) fd.append('content', text);
+        const type = currentAttachments[0]?.type || 'document';
+        fd.append('type', type);
+        currentAttachments.forEach(a => fd.append('files', a.file, a.name));
+        result = await api.uploadCrmAttachments(active.id, fd);
+      } else {
+        const chosenModel = model || '';
+        result = await api.addCrmMessage(active.id, 'user', text, chosenModel);
+      }
+      if (result && result.ok) {
+        setMessages(prev => [...prev.slice(0, -1), result.message || { role: 'user', content: text }]);
+        setCrmConvos(prev => prev.map(c => c.id === active.id
+          ? { ...c, preview: text.slice(0, 80) || `[${currentAttachments[0]?.type}]`, message_count: (c.message_count || 0) + 1 }
           : c));
-        // el agente corre en background -> hacer polling hasta que aparezca la respuesta
-        if (data.agent_pending) {
+        if (result.agent_pending) {
           pollForAssistant(active.id, baseLen);
-        } else if (data.assistant_message) {
-          setMessages((prev) => [...prev, data.assistant_message]);
-          setCrmConvos((prev) => prev.map(c => c.id === active.id
-            ? { ...c, message_count: (c.message_count || 0) + 1 }
-            : c));
+        } else if (result.message?.role === 'assistant') {
+          setMessages(prev => [...prev, result.message]);
           setAgentWorking(false);
         }
-      } else if (data && !data.ok) { setError(data.error || 'Error al enviar'); setAgentWorking(false); }
+      } else if (result && !result.ok) {
+        setError(result.error || 'Error al enviar');
+        setAgentWorking(false);
+      }
     } catch { setError('Error al enviar mensaje'); setAgentWorking(false); }
-  }, [input, active, model]);
+  }, [input, attachments, active, model, messages.length]);
 
   // ---- Polling: consulta la conversación hasta que Hermes termine ----
   const pollForAssistant = useCallback(async (cid, baseLen) => {
@@ -492,6 +565,12 @@ const ChatView = () => {
                           {msg.artifacts.map((a, j) => <ArtifactCard key={j} artifact={a} />)}
                         </div>
                       )}
+                      {/* Adjuntos multimedia (audio/documento/imagen) */}
+                      {Array.isArray(msg.attachments) && msg.attachments.length > 0 && (
+                        <div className="mt-2 space-y-1">
+                          {msg.attachments.map((att, j) => <AttachmentCard key={j} att={att} />)}
+                        </div>
+                      )}
                     </div>
                   </div>
                   {/* Acciones: copiar */}
@@ -524,20 +603,62 @@ const ChatView = () => {
             <div ref={messagesEndRef} />
           </div>
 
-          {/* Input inferior */}
-          <div className="border-t border-gray-800 p-3 bg-gray-900/80">
-            <form className="flex gap-2" onSubmit={handleSend}>
-              <input
-                type="text"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder={agentWorking ? 'El agente está respondiendo…' : (activeIsCrm ? 'Escribí tu mensaje…' : 'Seleccioná una conversación para responder')}
-                disabled={!activeIsCrm || agentWorking}
-                className="flex-1 min-w-0 px-4 py-2.5 bg-gray-800 border border-gray-700 rounded-lg text-gray-100 focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:border-transparent disabled:opacity-50"
-              />
-              <button type="submit" disabled={!activeIsCrm || agentWorking || !input.trim()} className="px-4 py-2.5 bg-gradient-to-r from-cyan-400 to-blue-500 text-white rounded-lg hover:from-cyan-300 hover:to-blue-400 transition font-medium disabled:opacity-50">Enviar</button>
+          {/* Input inferior multimedia */}
+          <div className={`border-t border-gray-800 p-3 bg-gray-900/80 ${dragOver ? 'ring-2 ring-cyan-400/50' : ''}`}
+               onDragOver={(e) => { e.preventDefault(); setDragOver(true); }} onDragLeave={() => setDragOver(false)} onDrop={handleDrop}>
+            {/* Previews de adjuntos */}
+            {attachments.length > 0 && (
+              <div className="flex flex-wrap gap-2 mb-2">
+                {attachments.map((a, i) => (
+                  <div key={i} className="relative group">
+                    {a.type === 'image' ? (
+                      <img src={a.url} alt={a.name} className="w-14 h-14 object-cover rounded-lg border border-gray-700" />
+                    ) : a.type === 'audio' ? (
+                      <div className="w-32 h-14 flex items-center gap-1 px-2 rounded-lg bg-gray-800 border border-gray-700">
+                        <span>🎵</span>
+                        <span className="text-xs text-gray-400 truncate">{a.name}</span>
+                      </div>
+                    ) : (
+                      <div className="w-32 h-14 flex items-center gap-1 px-2 rounded-lg bg-gray-800 border border-gray-700">
+                        <span>📄</span>
+                        <span className="text-xs text-gray-400 truncate">{a.name}</span>
+                      </div>
+                    )}
+                    <button onClick={() => removeAttachment(i)} className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white rounded-full text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition">×</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <form className="flex gap-2 items-end" onSubmit={handleSend}>
+              <button type="button" onClick={() => fileInputRef.current?.click()} disabled={agentWorking || recording}
+                      className="p-2.5 bg-gray-800 border border-gray-700 rounded-lg text-gray-300 hover:text-cyan-400 hover:border-cyan-500/40 transition disabled:opacity-50" title="Adjuntar archivo">
+                📎
+              </button>
+              <input ref={fileInputRef} type="file" multiple hidden
+                     accept=".pdf,.docx,.doc,.txt,.md,.py,.js,.json,.csv,image/*,audio/*"
+                     onChange={(e) => { handleFiles(e.target.files, e.target.files[0]?.type.startsWith('image/') ? 'image' : e.target.files[0]?.type.startsWith('audio/') ? 'audio' : 'document'); e.target.value = ''; }} />
+              <div className="flex-1 relative">
+                <textarea
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(e); } }}
+                  onPaste={handlePaste}
+                  placeholder={agentWorking ? 'El agente está respondiendo…' : (activeIsCrm ? 'Escribí tu mensaje… (Enter para enviar, Shift+Enter nueva línea)' : 'Seleccioná una conversación para responder')}
+                  disabled={!activeIsCrm || agentWorking}
+                  rows={1}
+                  className="w-full px-4 py-2.5 bg-gray-800 border border-gray-700 rounded-lg text-gray-100 focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:border-transparent disabled:opacity-50 resize-none overflow-y-auto"
+                  style={{ minHeight: '42px', maxHeight: '120px' }}
+                />
+              </div>
+              <button type="button" onClick={startRecording} disabled={agentWorking || recording}
+                      className={`p-2.5 border rounded-lg transition disabled:opacity-50 ${recording ? 'bg-red-500/20 border-red-500 text-red-400 animate-pulse' : 'bg-gray-800 border-gray-700 text-gray-300 hover:text-cyan-400 hover:border-cyan-500/40'}`}
+                      title={recording ? 'Grabando…' : 'Grabar nota de voz'}>
+                🎤
+              </button>
+              <button type="submit" disabled={!activeIsCrm || agentWorking || (!input.trim() && attachments.length === 0)}
+                      className="px-4 py-2.5 bg-gradient-to-r from-cyan-400 to-blue-500 text-white rounded-lg hover:from-cyan-300 hover:to-blue-400 transition font-medium disabled:opacity-50">Enviar</button>
             </form>
-            <p className="text-[11px] text-gray-600 mt-2">{totalVisible} conversaciones · Hermes de fondo · <kbd className="text-gray-500">⌘K</kbd> buscar</p>
+            <p className="text-[11px] text-gray-600 mt-2">{totalVisible} conversaciones · Hermes de fondo · <kbd className="text-gray-500">⌘K</kbd> buscar · Adjuntá documentos, imágenes o grabá audio</p>
           </div>
         </div>
       </div>
