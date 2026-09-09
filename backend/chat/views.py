@@ -382,11 +382,12 @@ def _ask_hermes(user_id, conversation_pk, user_content, requested_model=None):
     if not key:
         return _ask_proxy_nous(user_id, conversation_pk, user_content, requested_model)
 
-    # Modelo: el del selector; si viene empty o 'hermes-agent' (que resuelve mal al
-    # default deepseek → Nous sin créditos → Nvidia 529), usar longcat free estable.
+    # Modelo: el del selector; si viene empty o 'hermes-agent' (que resuelve mal),
+    # usar el default de Command Code (deepseek v4 flash, el mas estable del provider
+    # activo). NO longcat en lowercase via command code — daba 524 upstream.
     model = (requested_model or '').strip()
     if not model or model == 'hermes-agent':
-        model = 'meituan/longcat-2.0:free'
+        model = 'deepseek/deepseek-v4-flash'
 
     try:
         from django.contrib.auth.models import User
@@ -522,7 +523,7 @@ def _create_agent_session_sub(user, conversation_id, model):
     if not key or not GATEWAY_SESSIONS_URL:
         return None
     # modelo a usar: nunca 'hermes-agent' (resuelve mal), siempre uno concreto
-    create_model = model if model and model != 'hermes-agent' else 'meituan/longcat-2.0:free'
+    create_model = model if model and model != 'hermes-agent' else 'deepseek/deepseek-v4-flash'
     sid = f"crm_{conversation_id}_{uuid_hex8()}"
     body = json.dumps({
         "id": sid, "model": create_model,
