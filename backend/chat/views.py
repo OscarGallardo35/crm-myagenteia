@@ -232,6 +232,7 @@ def crm_conversation_detail(request, pk):
             'messages': [{
                 'role': m.role,
                 'content': m.content,
+                'artifacts': m.artifacts or [],
                 'created_at': m.created_at.isoformat() if m.created_at else None,
             } for m in msgs],
         })
