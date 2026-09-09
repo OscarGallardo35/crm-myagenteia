@@ -135,6 +135,35 @@ export const api = {
   getHermesModels: async () => {
     return fetchWithAuth(`${API_BASE_URL}/hermes/models/`);
   },
+
+  // CRM conversations (nuevo chat, retomar, renombrar)
+  getCrmConversations: async () => {
+    return fetchWithAuth(`${API_BASE_URL}/conversations/`);
+  },
+  createCrmConversation: async (title) => {
+    return fetchWithAuth(`${API_BASE_URL}/conversations/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: title || undefined }),
+    });
+  },
+  getCrmConversation: async (id) => {
+    return fetchWithAuth(`${API_BASE_URL}/conversations/${id}/`);
+  },
+  renameCrmConversation: async (id, title) => {
+    return fetchWithAuth(`${API_BASE_URL}/conversations/${id}/`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title }),
+    });
+  },
+  addCrmMessage: async (id, role, content) => {
+    return fetchWithAuth(`${API_BASE_URL}/conversations/${id}/message/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ role, content }),
+    });
+  },
 };
 
 async function fetchWithAuth(url, options = {}) {

@@ -145,3 +145,93 @@ def agents_list(request):
     agents = AgentTask.objects.all().order_by('-created_at')
     data = [{'id': a.id, 'name': a.name, 'type': a.agent_type, 'status': a.status} for a in agents]
     return Response(data)
+
+
+# ===== Conversaciones del CRM (nuevo chat, renombrar, retomar) =====
+
+@api_view(['GET', 'POST'])
+def crm_conversations(request):
+    """Lista o crea conversaciones del CRM (sesiones del panel)."""
+    if request.method == 'GET':
+        convos = Conversation.objects.filter(user=request.user).order_by('-updated_at')
+        data = [{
+            'id': c.id,
+            'title': c.title or 'Nueva conversación',
+            'created_at': c.created_at.isoformat() if c.created_at else None,
+            'updated_at': c.updated_at.isoformat() if c.updated_at else None,
+            'model': c.model_config.name if c.model_config else '',
+            'message_count': c.messages.count(),
+            'preview': (c.messages.order_by('-created_at').first().content[:80]
+                        if c.messages.first() else ''),
+        } for c in convos]
+        return Response({'ok': True, 'conversations': data})
+
+    # POST: crear nueva conversación (sesión nueva)
+    serializer = ConversationSerializer(data={
+        'user': request.user.id,
+        'title': request.data.get('title') or None,
+    })
+    if serializer.is_valid():
+        c = serializer.save()
+        return Response({'ok': True, 'conversation': {
+            'id': c.id,
+            'title': c.title or 'Nueva conversación',
+            'created_at': c.created_at.isoformat() if c.created_at else None,
+            'updated_at': c.updated_at.isoformat() if c.updated_at else None,
+            'model': '',
+            'message_count': 0,
+            'preview': '',
+        }}, status=201)
+    return Response({'ok': False, 'errors': serializer.errors}, status=400)
+
+
+@api_view(['GET', 'PATCH'])
+def crm_conversation_detail(request, pk):
+    """Retoma (GET data) o renombra (PATCH title) una conversación del CRM."""
+    try:
+        c = Conversation.objects.get(pk=pk, user=request.user)
+    except Conversation.DoesNotExist:
+        return Response({'ok': False, 'error': 'Conversación no encontrada'}, status=404)
+
+    if request.method == 'GET':
+        msgs = c.messages.order_by('created_at')
+        return Response({
+            'ok': True,
+            'conversation': {
+                'id': c.id,
+                'title': c.title or 'Nueva conversación',
+                'model': c.model_config.name if c.model_config else '',
+                'message_count': msgs.count(),
+            },
+            'messages': [{
+                'role': m.role,
+                'content': m.content,
+                'created_at': m.created_at.isoformat() if m.created_at else None,
+            } for m in msgs],
+        })
+
+    # PATCH: renombrar
+    title = request.data.get('title')
+    if title is not None:
+        c.title = str(title).strip()
+        c.save()
+    return Response({'ok': True, 'title': c.title})
+
+
+@api_view(['POST'])
+def crm_conversation_message(request, pk):
+    """Agrega un mensaje a una conversación del CRM (usuario o asistente)."""
+    try:
+        c = Conversation.objects.get(pk=pk, user=request.user)
+    except Conversation.DoesNotExist:
+        return Response({'ok': False, 'error': 'Conversación no encontrada'}, status=404)
+    role = request.data.get('role', 'user')
+    content = request.data.get('content')
+    if not content:
+        return Response({'ok': False, 'error': 'content requerido'}, status=400)
+    m = Message.objects.create(conversation=c, role=role, content=content)
+    c.save()  # actualizar updated_at
+    return Response({'ok': True, 'message': {
+        'role': m.role, 'content': m.content,
+        'created_at': m.created_at.isoformat() if m.created_at else None,
+    }}, status=201)
