@@ -3,9 +3,24 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = 'django-insecure-_(-*z!q&@#+_))))zv6ju*zeq^3o$&#!0qd!z(*%v)#(_)6))$'
-DEBUG = True
-ALLOWED_HOSTS = ['crm.mercadodigital.pro', 'coolify.mercadodigital.pro', 'studio.mercadodigital.pro', 'voice.mercadodigital.pro', 'enjambre.mercadodigital.pro', 'veterinaria.mercadodigital.pro', 'myagenteia.mercadodigital.pro', 'trama.mercadodigital.pro', 'servicell.mercadodigital.pro', 'localhost', '127.0.0.1', 'backend']
+SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-_(-*z!q&@#+_))))zv6ju*zeq^3o$&#!0qd!z(*%v)#(_)6))$')
+DEBUG = os.environ.get('DJANGO_DEBUG', 'False').lower() in ('1', 'true', 'yes')
+
+# ALLOWED_HOSTS: env var (coma-separada) + IP pública del host + locales siempre.
+# La env var del docker-compose incluye crm.mercadodigital.pro,localhost; acá además
+# permitimos la IP pública (45.92.8.192) y privada del host para que el tunnel/healthcheck
+# no dispare DisallowedHost.
+_default_hosts = ['crm.mercadodigital.pro', 'coolify.mercadodigital.pro',
+                  'studio.mercadodigital.pro', 'voice.mercadodigital.pro',
+                  'enjambre.mercadodigital.pro', 'veterinaria.mercadodigital.pro',
+                  'myagenteia.mercadodigital.pro', 'trama.mercadodigital.pro',
+                  'servicell.mercadodigital.pro', 'localhost', '127.0.0.1',
+                  'backend', '45.92.8.192', '45.92.8.192:8000']
+_env_hosts = os.environ.get('ALLOWED_HOSTS', '')
+if _env_hosts:
+    _default_hosts = [h.strip() for h in _env_hosts.split(',') if h.strip()] + \
+        ['45.92.8.192', '45.92.8.192:8000', 'localhost', '127.0.0.1', 'backend']
+ALLOWED_HOSTS = list(dict.fromkeys(_default_hosts))
 
 INSTALLED_APPS = [
     'django.contrib.admin',

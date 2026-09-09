@@ -647,7 +647,7 @@ def _ask_hermes(user_id, conversation_pk, user_content, requested_model=None):
             headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json",
                      "X-Hermes-Session-Id": agent_session_id, "User-Agent": "crm-bot"})
         try:
-            with urllib.request.urlopen(req, timeout=600) as r:
+            with urllib.request.urlopen(req, timeout=1800) as r:
                 data = json.load(r)
         except urllib.error.HTTPError as e:
             # si la sesión no existe, recrearla una vez
@@ -666,7 +666,7 @@ def _ask_hermes(user_id, conversation_pk, user_content, requested_model=None):
                         f"{GATEWAY_CHAT_URL.format(agent_session_id)}", data=body,
                         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json",
                                  "X-Hermes-Session-Id": agent_session_id, "User-Agent": "crm-bot"})
-                    with urllib.request.urlopen(req, timeout=600) as r2:
+                    with urllib.request.urlopen(req, timeout=1800) as r2:
                         data = json.load(r2)
                 else:
                     return _ask_proxy_nous(user_id, conversation_pk, user_content, requested_model)
