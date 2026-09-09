@@ -1,5 +1,6 @@
 from django.urls import path
 from . import views
+from . import hermes
 
 urlpatterns = [
     path('dashboard/stats/', views.dashboard_stats),
@@ -10,4 +11,8 @@ urlpatterns = [
     path('scheduled/', views.scheduled_list),
     path('agents/', views.agents_list),
     path('leads/<int:lead_id>/status/', views.update_lead_status),
+    # Hermes bridge
+    path('hermes/sessions/', hermes.hermes_sessions),
+    path('hermes/sessions/<str:session_id>/', hermes.hermes_session_messages),
+    path('hermes/models/', hermes.hermes_models),
 ]

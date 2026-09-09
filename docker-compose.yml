@@ -28,6 +28,8 @@ services:
              gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 3 --threads 2"
     ports:
       - "8000:8000"
+    volumes:
+      - /root/.hermes:/hermes:ro
     environment:
       DB_NAME: myagenteia_crm
       DB_USER: postgres
@@ -38,6 +40,8 @@ services:
       SECRET_KEY: django-insecure-change-me-in-production
       DEBUG: "false"
       ALLOWED_HOSTS: crm.mercadodigital.pro,localhost
+      HERMES_STATE_DB: /hermes/state.db
+      HERMES_MODELS_JSON: /hermes/crm/models.json
     healthcheck:
       test: ["CMD", "curl", "-f", "-L", "http://localhost:8000/api/"]
       interval: 15s

@@ -1,138 +1,199 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import ModelSelector from './ModelSelector';
 import { api } from '../lib/api';
 
-const ChatView = () => {
-  const [chats, setChats] = useState([]);
-  const [selectedChatId, setSelectedChatId] = useState(null);
-  const [messages, setMessages] = useState([]);
-  const [input, setInput] = useState('');
-  const [model, setModel] = useState('claude-3-opus');
-  const [useMemory, setUseMemory] = useState(false);
-  const [loading, setLoading] = useState(false);
+// Inspirado en la UX de Claude: sidebar con historial + área central de conversación.
+// De fondo: sesiones REALES del agente Hermes (leídas de /root/.hermes/state.db).
+const INITIAL_VISIBLE = 12;
 
-  useEffect(() => {
-    loadChats();
+const ChatView = () => {
+  const [sessions, setSessions] = useState([]);
+  const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE);
+  const [selectedId, setSelectedId] = useState(null);
+  const [messages, setMessages] = useState([]);
+  const [model, setModel] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [loadingSession, setLoadingSession] = useState(false);
+  const [error, setError] = useState('');
+  const messagesEndRef = useRef(null);
+
+  const scrollToBottom = useCallback(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, []);
 
-  const loadChats = async () => {
+  // Cargar sesiones reales de Hermes
+  useEffect(() => {
+    let active = true;
+    api.getHermesSessions(100)
+      .then((data) => {
+        if (!active) return;
+        if (data && data.ok) {
+          setSessions(data.sessions || []);
+          if ((data.sessions || []).length > 0) {
+            setSelectedId(data.sessions[0].id);
+          }
+        } else {
+          setError('No se pudieron cargar las sesiones');
+        }
+      })
+      .catch(() => setError('Error al cargar sesiones de Hermes'))
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, []);
+
+  // Cargar mensajes de la sesión seleccionada
+  const loadSession = useCallback(async (sid) => {
+    setLoadingSession(true);
+    setError('');
     try {
-      const data = await api.getChats();
-      setChats(data);
-      if (data.length > 0 && !selectedChatId) {
-        setSelectedChatId(data[0].id);
-        loadMessages(data[0].id);
+      const data = await api.getHermesSessionMessages(sid);
+      if (data && data.ok) {
+        setMessages(data.messages || []);
+      } else {
+        setMessages([]);
       }
-    } catch (error) {
-      console.error('Error loading chats:', error);
-    }
-  };
-
-  const loadMessages = async (chatId) => {
-    try {
-      setLoading(true);
-      const data = await api.getChatMessages(chatId);
-      setMessages(data);
-    } catch (error) {
-      console.error('Error loading messages:', error);
+    } catch {
+      setMessages([]);
     } finally {
-      setLoading(false);
+      setLoadingSession(false);
     }
-  };
+  }, []);
 
-  const handleSendMessage = async (e) => {
+  useEffect(() => {
+    if (selectedId) loadSession(selectedId);
+  }, [selectedId, loadSession]);
+
+  useEffect(() => { scrollToBottom(); }, [messages, scrollToBottom]);
+
+  const visible = sessions.slice(0, visibleCount);
+  const total = sessions.length;
+
+  const handleSend = async (e) => {
     e.preventDefault();
-    if (!input.trim() || !selectedChatId) return;
-
-    setLoading(true);
-    try {
-      // In a real app, we would send the message and then update the list
-      // For now, we just clear the input and reload messages
-      await api.sendMessage(selectedChatId, input);
-      setInput('');
-      loadMessages(selectedChatId);
-    } catch (error) {
-      console.error('Error sending message:', error);
-    } finally {
-      setLoading(false);
-    }
+    // Envío delegado a Hermes: por ahora queda como placeholder — el historial es de lectura.
+    // TODO: conectar con el proxy Hermes (puerto 8645) para generar respuesta real.
   };
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex flex-wrap items-center gap-3 p-4 border-b border-gray-800">
-        <h2 className="text-lg font-semibold min-w-0">Conversaciones</h2>
+      <div className="flex flex-wrap items-center gap-3 p-3 border-b border-gray-800">
+        <h2 className="text-lg font-semibold min-w-0">Hermes — Historial</h2>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 ml-auto min-w-0">
           <ModelSelector value={model} onModelChange={setModel} />
-          <label className="flex items-center gap-2 text-gray-300 min-w-0 max-w-full">
-            <input
-              type="checkbox"
-              checked={useMemory}
-              onChange={(e) => setUseMemory(e.target.checked)}
-              className="h-4 w-4 text-cyan-400 shrink-0"
-            />
-            <span className="break-words">Usar memoria de chat anterior</span>
-          </label>
         </div>
       </div>
-      
-      <div className="flex-1 overflow-hidden">
-        <div className="flex h-full">
-          {/* Chat list */}
-          <div className="w-64 border-r border-gray-800 overflow-y-auto">
-            {chats.map(chat => (
-              <div
-                key={chat.id}
-                onClick={() => {
-                  setSelectedChatId(chat.id);
-                  loadMessages(chat.id);
-                }}
-                className={`cursor-pointer p-3 hover:bg-gray-800 ${selectedChatId === chat.id ? 'bg-gray-800' : ''}`}
-              >
-                <div className="flex items-center space-x-3">
-                  <div className="w-8 h-8 bg-gradient-to-r from-cyan-400 to-blue-500 rounded-lg flex items-center justify-center text-white text-sm">
-                    {chat.title?.charAt(0) || 'C'}
+
+      <div className="flex-1 flex min-h-0">
+        {/* ===== Sidebar de sesiones (estilo Claude) ===== */}
+        <div className="w-72 border-r border-gray-800 flex flex-col min-h-0 shrink-0">
+          <div className="flex-1 overflow-y-auto">
+            {loading ? (
+              <div className="p-4 text-gray-400 text-sm">Cargando sesiones…</div>
+            ) : error && sessions.length === 0 ? (
+              <div className="p-4 text-gray-400 text-sm">{error}</div>
+            ) : (
+              <div>
+                {visible.map((s, i) => (
+                  <div
+                    key={s.id}
+                    onClick={() => setSelectedId(s.id)}
+                    className={`px-3 py-2.5 border-b border-gray-800/60 cursor-pointer hover:bg-gray-800/50 transition ${
+                      selectedId === s.id ? 'bg-gray-800/80' : ''
+                    } ${i === 0 ? 'bg-gradient-to-r from-cyan-500/10 to-transparent' : ''}`}
+                  >
+                    <div className="flex items-center gap-2">
+                      {s.pinned && <span className="text-cyan-400 text-xs">📌</span>}
+                      <h3 className="font-medium text-white text-sm truncate flex-1">
+                        {s.title || '(sin título)'}
+                      </h3>
+                    </div>
+                    <p className="text-xs text-gray-400 mt-0.5 truncate">
+                      {s.preview || '…'}
+                    </p>
+                    <div className="flex items-center justify-between mt-1">
+                      <span className="text-[11px] text-gray-500">{s.last_activity_display}</span>
+                      <span className="text-[11px] text-gray-600">{s.message_count} msgs</span>
+                    </div>
                   </div>
-                  <div>
-                    <h3 className="font-medium text-white">{chat.title || 'Sin título'}</h3>
-                    <p className="text-xs text-gray-400">{chat.updated_at || ''}</p>
-                  </div>
-                </div>
+                ))}
+
+                {/* Botón mostrar todas */}
+                {visibleCount < total && (
+                  <button
+                    onClick={() => setVisibleCount(total)}
+                    className="w-full py-3 text-sm text-cyan-400 hover:bg-gray-800/60 transition font-medium"
+                  >
+                    ▾ Mostrar todas ({total - visibleCount} más)
+                  </button>
+                )}
+                {visibleCount >= total && total > INITIAL_VISIBLE && (
+                  <button
+                    onClick={() => setVisibleCount(INITIAL_VISIBLE)}
+                    className="w-full py-3 text-sm text-gray-500 hover:bg-gray-800/60 transition"
+                  >
+                    ▴ Mostrar menos
+                  </button>
+                )}
               </div>
-            ))}
+            )}
           </div>
-          
-          {/* Chat area */}
-          <div className="flex-1 flex flex-col">
-            <div className="flex-1 overflow-y-auto p-4 space-y-4">
-              {messages.map(msg => (
-                <div key={msg.id} className={`flex ${msg.is_user ? 'justify-end' : 'justify-start'} max-w-[80%]`}>
-                  <div className={`${msg.is_user ? 'bg-cyan-500/20 text-cyan-200' : 'bg-gray-800/50 text-gray-100'} rounded-lg p-3 max-w-xs break-words`}>
+        </div>
+
+        {/* ===== Área central de conversación ===== */}
+        <div className="flex-1 flex flex-col min-w-0 min-h-0">
+          <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            {loadingSession ? (
+              <div className="text-center text-gray-400 py-8">Cargando conversación…</div>
+            ) : messages.length === 0 ? (
+              <div className="text-center text-gray-500 py-8 text-sm">
+                Seleccioná una sesión del historial para ver la conversación.
+              </div>
+            ) : (
+              messages.map((msg, i) => (
+                <div
+                  key={i}
+                  className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                >
+                  <div
+                    className={`max-w-[85%] rounded-xl px-3.5 py-2.5 text-sm leading-relaxed break-words whitespace-pre-wrap ${
+                      msg.role === 'user'
+                        ? 'bg-cyan-500/20 text-cyan-100'
+                        : msg.role === 'tool'
+                        ? 'bg-gray-850 bg-gray-800/60 font-mono text-xs text-gray-300'
+                        : 'bg-gray-800/60 text-gray-100'
+                    }`}
+                  >
+                    {msg.role !== 'user' && msg.role !== 'assistant' && (
+                      <span className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1">
+                        {msg.role}
+                      </span>
+                    )}
                     {msg.content}
                   </div>
                 </div>
-              ))}
-              {loading && <div className="text-center text-gray-400">Cargando...</div>}
-            </div>
-            <div className="border-t border-gray-800 p-4">
-              <form onSubmit={handleSendMessage} className="flex space-x-3">
-                <input
-                  type="text"
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  placeholder="Escribe un mensaje..."
-                  className="flex-1 px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-gray-100 focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:border-transparent"
-                  disabled={loading}
-                />
-                <button
-                  type="submit"
-                  disabled={loading || !input.trim() || !selectedChatId}
-                  className="px-4 py-2 bg-gradient-to-r from-cyan-400 to-blue-500 text-white rounded-lg hover:from-cyan-300 hover:to-blue-400 transition"
-                >
-                  Enviar
-                </button>
-              </form>
-            </div>
+              ))
+            )}
+            <div ref={messagesEndRef} />
+          </div>
+
+          {/* Input inferior — envío hacia Hermes */}
+          <div className="border-t border-gray-800 p-3 bg-gray-900/80">
+            <form className="flex gap-2" onSubmit={handleSend}>
+              <input
+                type="text"
+                placeholder="Escribí para consultar a Hermes…"
+                className="flex-1 px-4 py-2.5 bg-gray-800 border border-gray-700 rounded-lg text-gray-100 focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:border-transparent"
+              />
+              <button
+                type="submit"
+                className="px-4 py-2.5 bg-gradient-to-r from-cyan-400 to-blue-500 text-white rounded-lg hover:from-cyan-300 hover:to-blue-400 transition font-medium"
+              >
+                Enviar
+              </button>
+            </form>
+            <p className="text-[11px] text-gray-600 mt-2">
+              Historial de conversaciones reales del agente Hermes · {total} sesiones
+            </p>
           </div>
         </div>
       </div>

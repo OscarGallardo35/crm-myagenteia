@@ -124,6 +124,17 @@ export const api = {
   getAgentsStatus: async () => {
     return fetchWithAuth(`${API_BASE_URL}/agents/status/`);
   },
+
+  // Hermes sessions bridge
+  getHermesSessions: async (limit = 20) => {
+    return fetchWithAuth(`${API_BASE_URL}/hermes/sessions/?limit=${limit}`);
+  },
+  getHermesSessionMessages: async (sessionId) => {
+    return fetchWithAuth(`${API_BASE_URL}/hermes/sessions/${sessionId}/`);
+  },
+  getHermesModels: async () => {
+    return fetchWithAuth(`${API_BASE_URL}/hermes/models/`);
+  },
 };
 
 async function fetchWithAuth(url, options = {}) {
