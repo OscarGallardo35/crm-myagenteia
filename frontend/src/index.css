@@ -1,5 +1,10 @@
 @import "tailwindcss";
 
+/* Evitar doble scrollbar vertical por defecto en el app */
+html {
+  scrollbar-gutter: stable;
+}
+
 /* Prevención de desbordamiento horizontal en móvil */
 html,
 body {
