@@ -64,6 +64,7 @@ const ChatView = () => {
 
   const messagesEndRef = useRef(null);
   const titleInputRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
@@ -192,9 +193,15 @@ const ChatView = () => {
   }, [handleFiles]);
 
   const startRecording = useCallback(async () => {
+    // Si ya está grabando, DETENER con el mismo botón.
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      mediaRecorderRef.current.stop();
+      return;
+    }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
       const chunks = [];
       mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
       mediaRecorder.onstop = () => {
@@ -202,10 +209,17 @@ const ChatView = () => {
         const url = URL.createObjectURL(blob);
         setAttachments(prev => [...prev, { file: blob, url, name: 'nota_voz.webm', size: blob.size, type: 'audio', mime: 'audio/webm' }]);
         stream.getTracks().forEach(t => t.stop());
+        mediaRecorderRef.current = null;
+        setRecording(false);
       };
       mediaRecorder.start();
       setRecording(true);
-      setTimeout(() => { mediaRecorder.stop(); setRecording(false); }, 30000); // max 30s
+      // Límite de seguridad (no corta antes si el usuario detiene manualmente)
+      setTimeout(() => {
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+          mediaRecorderRef.current.stop();
+        }
+      }, 30000);
     } catch { /* sin micrófono */ }
   }, []);
 
@@ -671,10 +685,12 @@ const ChatView = () => {
                   style={{ minHeight: '42px', maxHeight: '120px' }}
                 />
               </div>
-              <button type="button" onClick={startRecording} disabled={isActiveWorking || recording}
-                      className={`p-2.5 border rounded-lg transition disabled:opacity-50 ${recording ? 'bg-red-500/20 border-red-500 text-red-400 animate-pulse' : 'bg-gray-800 border-gray-700 text-gray-300 hover:text-cyan-400 hover:border-cyan-500/40'}`}
-                      title={recording ? 'Grabando…' : 'Grabar nota de voz'}>
-                🎤
+              <button type="button" onClick={startRecording} disabled={isActiveWorking}
+                      className={`p-2.5 border rounded-lg transition disabled:opacity-50 ${recording
+                        ? 'bg-red-500/25 border-red-500 text-red-300 animate-pulse hover:bg-red-500/40'
+                        : 'bg-gray-800 border-gray-700 text-gray-300 hover:text-cyan-400 hover:border-cyan-500/40'}`}
+                      title={recording ? 'Detener grabación' : 'Grabar nota de voz'}>
+                {recording ? '⏹' : '🎤'}
               </button>
               <button type="submit" disabled={!activeIsCrm || isActiveWorking || (!input.trim() && attachments.length === 0)}
                       className="px-4 py-2.5 bg-gradient-to-r from-cyan-400 to-blue-500 text-white rounded-lg hover:from-cyan-300 hover:to-blue-400 transition font-medium disabled:opacity-50">Enviar</button>

@@ -208,9 +208,14 @@ export const api = {
 async function fetchWithAuth(url, options = {}) {
   const token = getToken();
   const headers = {
-    'Content-Type': 'application/json',
     ...options.headers,
   };
+  // fetch() agrega el boundary correcto solo si NO forzamos el Content-Type:
+  // con FormData (upload multipart) no debe ir application/json, o el backend
+  // responde 415 Unsupported Media Type.
+  if (!(options.body instanceof FormData)) {
+    headers['Content-Type'] = 'application/json';
+  }
 
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
