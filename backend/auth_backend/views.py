@@ -9,6 +9,23 @@ from .models import UserToken
 @permission_classes([AllowAny])
 def login_view(request):
     from .serializers import LoginSerializer
+    from security.ip_throttle import get_client_ip, is_blocked, record_attempt, camouflage_delay
+
+    ip = get_client_ip(request)
+    ua = request.META.get('HTTP_USER_AGENT', '')[:400]
+    email_try = ""
+    try:
+        email_try = str(request.data.get('email', ''))[:200]
+    except Exception:
+        pass
+
+    # --- Bloqueo camuflado: la IP se ve bloqueada pero respondemos IDENTICO ---
+    if is_blocked(ip):
+        import time as _time
+        _time.sleep(camouflage_delay(ip))       # degradar sin delatar
+        record_attempt(ip, email_try, success=False, user_agent=ua)
+        return Response({"non_field_errors": ["Credenciales inválidas"]}, status=400)
+
     serializer = LoginSerializer(data=request.data)
     if serializer.is_valid():
         user = serializer.validated_data["user"]
@@ -16,7 +33,11 @@ def login_view(request):
         token = secrets.token_urlsafe(32)
         UserToken.objects.filter(user=user).delete()
         UserToken.objects.create(user=user, token=token)
+        record_attempt(ip, user.email, success=True, user_agent=ua)
         return Response({"token": token, "user": {"email": user.email}})
+
+    # fallo: registrar y evaluar umbral
+    record_attempt(ip, email_try, success=False, user_agent=ua)
     return Response(serializer.errors, status=400)
 
 @api_view(["POST"])

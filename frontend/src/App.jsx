@@ -6,6 +6,7 @@ import Dashboard from './components/Dashboard';
 import LeadsBoard from './components/LeadsBoard';
 import PostingCalendar from './components/PostingCalendar';
 import AgentsPanel from './components/AgentsPanel';
+import SecurityPanel from './components/SecurityPanel';
 import Login from './components/Login';
 
 const VIEWS = {
@@ -14,6 +15,7 @@ const VIEWS = {
   leads: { label: 'Leads', icon: '🎯', Component: LeadsBoard },
   calendar: { label: 'Calendario', icon: '📅', Component: PostingCalendar },
   agents: { label: 'Agentes', icon: '🤖', Component: AgentsPanel },
+  security: { label: 'Seguridad', icon: '🔒', Component: SecurityPanel },
 };
 
 function AppShell() {

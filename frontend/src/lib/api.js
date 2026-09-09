@@ -1,6 +1,7 @@
 // src/lib/api.js
 const API_BASE_URL = '/api/chat';
 const AUTH_BASE_URL = '/api';
+const SECURITY_BASE_URL = '/api/security';
 
 // Auth helpers
 const getToken = () => {
@@ -183,6 +184,18 @@ export const api = {
       body: JSON.stringify({ role, content, model: model || undefined }),
     });
   },
+
+  // Seguridad (vive en /api/security, no bajo /api/chat)
+  getSecuritySummary: async () => fetchWithAuth(`${SECURITY_BASE_URL}/summary/`),
+  getSecurityAttempts: async (limit = 100) => fetchWithAuth(`${SECURITY_BASE_URL}/attempts/?limit=${limit}`),
+  getSecurityBlocks: async () => fetchWithAuth(`${SECURITY_BASE_URL}/blocks/`),
+  getSecuritySsh: async (limit = 100) => fetchWithAuth(`${SECURITY_BASE_URL}/ssh/?limit=${limit}`),
+  securityBlockIp: async (ip) => fetchWithAuth(`${SECURITY_BASE_URL}/block/`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ip }),
+  }),
+  securityUnblockIp: async (ip) => fetchWithAuth(`${SECURITY_BASE_URL}/unblock/`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ip }),
+  }),
 };
 
 async function fetchWithAuth(url, options = {}) {

@@ -22,6 +22,7 @@ INSTALLED_APPS = [
     'posting',
     'agents',
     'auth_backend',
+    'security',
 ]
 
 MIDDLEWARE = [

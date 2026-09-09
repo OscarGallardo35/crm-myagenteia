@@ -48,4 +48,5 @@ urlpatterns = [
     path('api/leads/', include('leads.urls')),
     path('api/posting/', include('posting.urls')),
     path('api/agents/', include('agents.urls')),
+    path('api/security/', include('security.urls')),
 ]

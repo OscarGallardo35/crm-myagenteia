@@ -30,12 +30,14 @@ services:
       - "8000:8000"
     volumes:
       - /root/.hermes:/hermes:ro
+      - /var/log:/var/log/hostlogs:ro
     environment:
       DB_NAME: myagenteia_crm
       DB_USER: postgres
       DB_PASSWORD: postgres
       DB_HOST: db
       DB_PORT: 5432
+      SSH_AUTH_LOG: /var/log/hostlogs/auth.log
       REDIS_URL: redis://redis:6379/0
       SECRET_KEY: django-insecure-change-me-in-production
       DEBUG: "false"
