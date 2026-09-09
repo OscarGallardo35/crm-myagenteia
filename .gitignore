@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
+db.sqlite3
+*.db
+
+# Django
+/staticfiles/
+/media/
+.env
+*.env
+
+# Node / React
+node_modules/
+frontend/node_modules/
+/dist/
+npm-debug.log*
+yarn-error.log*
+package-lock.json
+
+# ESLint / editors
+.eslintcache
+.vscode/
+.idea/
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Secrets
+*.pem
+*.key
