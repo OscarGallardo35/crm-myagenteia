@@ -44,6 +44,9 @@ services:
       HERMES_MODELS_JSON: /hermes/crm/models.json
       HERMES_PROXY_URL: http://10.0.3.1:8645/v1
       HERMES_PROXY_MODEL: meituan/longcat-2.0:free
+      HERMES_GATEWAY_URL: http://10.0.3.1:8642/v1
+      HERMES_GATEWAY_MODEL: hermes-agent
+      HERMES_ENV_FILE: /hermes/.env
     healthcheck:
       test: ["CMD", "curl", "-f", "-L", "http://localhost:8000/api/"]
       interval: 15s

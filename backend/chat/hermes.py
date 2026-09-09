@@ -17,7 +17,9 @@ from rest_framework.response import Response
 
 # Path al state.db de Hermes (montado como volumen read-only en el contenedor)
 STATE_DB = os.environ.get("HERMES_STATE_DB", "/hermes/state.db")
-MODELS_JSON = os.environ.get("HERMES_MODELS_JSON", "/hermes/models.json")
+MODELS_JSON = os.environ.get("HERMES_MODELS_JSON", "/hermes/crm/models.json")
+GATEWAY_URL = os.environ.get("HERMES_GATEWAY_URL", "").rstrip('/')
+GATEWAY_MODEL = os.environ.get("HERMES_GATEWAY_MODEL", "hermes-agent")
 
 EXCLUDED_PREFIXES = ("cron_", "_cron", "claude_", "codex_", "opencode_")
 
@@ -33,34 +35,68 @@ def _get_conn():
     return conn
 
 
-def _read_models():
-    """Lee los modelos activos de Hermes desde el archivo de configuración exportado."""
-    if not os.path.exists(MODELS_JSON):
-        # Default: lista acotada y real del fleet Hermes
-        return [
-            {"id": "deepseek/deepseek-v4-flash-0731", "label": "DeepSeek V4 Flash", "provider": "DeepSeek"},
-            {"id": "meituan/longcat-2.0:free", "label": "LongCat 2.0", "provider": "Nous"},
-            {"id": "poolside/laguna-s-2.1:free", "label": "Laguna-S 2.1", "provider": "Nous"},
-            {"id": "poolside/laguna-xs-2.1:free", "label": "Laguna-XS 2.1", "provider": "Nous"},
-            {"id": "inclusionai/ling-3.0-flash-fin:free", "label": "Ling 3.0 Flash", "provider": "OpenRouter"},
-            {"id": "minimax/minimax-m3:free", "label": "MiniMax M3", "provider": "OpenRouter"},
-            {"id": "nvidia/nemotron-3-super-120b-a12b:free", "label": "Nemotron 3 Super", "provider": "OpenRouter"},
-        ]
+def _gateway_key():
+    """Lee API_SERVER_KEY del config .env de Hermes (montado /hermes/.env)."""
     try:
-        with open(MODELS_JSON) as f:
-            data = json.load(f)
-        models = []
-        for m in data if isinstance(data, list) else data.get("models", []):
-            mid = m.get("id", "") if isinstance(m, dict) else str(m)
-            if not mid:
-                continue
-            parts = mid.split("/")
-            provider = parts[0] if len(parts) > 1 else "hermes"
-            label = m.get("label") if isinstance(m, dict) else mid.split("/")[-1]
-            models.append({"id": mid, "label": label or mid.split("/")[-1], "provider": provider})
-        return models[:40] or None
+        env_path = os.environ.get("HERMES_ENV_FILE", "/hermes/.env")
+        if os.path.exists(env_path):
+            with open(env_path) as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("API_SERVER_KEY=") and not line.startswith('#'):
+                        return line.split("=", 1)[1].strip()
     except Exception:
-        return None
+        pass
+    return os.environ.get("HERMES_GATEWAY_KEY", "")
+
+
+def _read_models():
+    """Prioriza el catálogo real del api_server del gateway (/api/model/options);
+    cae al archivo local si el gateway no está disponible."""
+    if GATEWAY_URL:
+        try:
+            key = _gateway_key()
+            import urllib.request
+            req = urllib.request.Request(
+                f"{GATEWAY_URL.replace('/v1', '')}/api/model/options",
+                headers={"Authorization": f"Bearer {key}", "User-Agent": "crm-bot"})
+            with urllib.request.urlopen(req, timeout=15) as r:
+                data = json.load(r)
+            models = []
+            for p in data.get("providers", []):
+                slug = p.get("slug", "")
+                na = set(p.get("unavailable_models", []) or [])
+                for mid in p.get("models", []):
+                    mid = str(mid)
+                    if not mid or mid in na:
+                        continue
+                    if slug == "hermes-proxy" or slug == "tokenrouter":
+                        continue  # el CRM no manda por el proxy Nous
+                    label = mid.split("/")[-1].replace(":free", "").replace("-", " ").replace("_", " ").title()
+                    models.append({"id": mid, "label": label, "provider": slug})
+            if models:
+                return models[:60]
+        except Exception:
+            pass
+
+    # Fallback local
+    if os.path.exists(MODELS_JSON):
+        try:
+            with open(MODELS_JSON) as f:
+                data = json.load(f)
+            models = []
+            for m in data if isinstance(data, list) else data.get("models", []):
+                mid = m.get("id", "") if isinstance(m, dict) else str(m)
+                if not mid:
+                    continue
+                parts = mid.split("/")
+                provider = parts[0] if len(parts) > 1 else "hermes"
+                label = m.get("label") if isinstance(m, dict) else mid.split("/")[-1]
+                models.append({"id": mid, "label": label or mid.split("/")[-1], "provider": provider})
+            return models[:60] or None
+        except Exception:
+            return None
+    return None
 
 
 @api_view(["GET"])

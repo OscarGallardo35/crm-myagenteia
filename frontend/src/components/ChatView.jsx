@@ -36,6 +36,7 @@ const ChatView = () => {
   const [model, setModel] = useState('');
   const [loadingInit, setLoadingInit] = useState(true);
   const [loadingMsgs, setLoadingMsgs] = useState(false);
+  const [agentWorking, setAgentWorking] = useState(false);
   const [input, setInput] = useState('');
   const [error, setError] = useState('');
 
@@ -61,6 +62,7 @@ const ChatView = () => {
 
   useEffect(() => { if (isMobile) setSidebarOpen(false); }, [isMobile]);
   useEffect(() => { scrollToBottom(); }, [messages, scrollToBottom]);
+  useEffect(() => { if (agentWorking) scrollToBottom(); }, [agentWorking, scrollToBottom]);
 
   // Atajo Ctrl+K (búsqueda) + Escape
   useEffect(() => {
@@ -134,31 +136,68 @@ const ChatView = () => {
     } catch { setError('Error al crear conversación'); }
   }, [isMobile]);
 
-  // ---- Enviar mensaje ----
+  // ---- Enviar mensaje (background job + polling: el agente corre en un hilo) ----
   const handleSend = useCallback(async (e) => {
     e.preventDefault();
     const text = input.trim();
     if (!text || !active || active.type !== 'crm') return;
-    setLoadingMsgs(true);
+    setInput('');
+    setMessages((prev) => [...prev, { role: 'user', content: text }]);
+    setAgentWorking(true);
     setError('');
     try {
       const chosenModel = model || 'meituan/longcat-2.0:free';
       const data = await api.addCrmMessage(active.id, 'user', text, chosenModel);
-      setInput('');
       if (data && data.ok) {
-        const newMsgs = [data.message];
-        if (data.assistant_message) newMsgs.push(data.assistant_message);
-        setMessages((prev) => [...prev, ...newMsgs]);
-        if (data.assistant_error) setError('No se pudo obtener respuesta (revisá el proxy Hermes).');
-        else {
+        // actualizar mensaje user y preview
+        setMessages((prev) => [...prev.slice(0, -1), { role: 'user', content: text }]);
+        setCrmConvos((prev) => prev.map(c => c.id === active.id
+          ? { ...c, preview: text.slice(0, 80), message_count: (c.message_count || 0) + 1 }
+          : c));
+        // el agente corre en background -> hacer polling hasta que aparezca la respuesta
+        if (data.agent_pending) {
+          pollForAssistant(active.id, text);
+        } else if (data.assistant_message) {
+          setMessages((prev) => [...prev, data.assistant_message]);
           setCrmConvos((prev) => prev.map(c => c.id === active.id
-            ? { ...c, preview: text.slice(0, 80), message_count: (c.message_count || 0) + newMsgs.length }
+            ? { ...c, message_count: (c.message_count || 0) + 1 }
             : c));
+          setAgentWorking(false);
         }
-      } else if (data && !data.ok) setError(data.error || 'Error al enviar');
-    } catch { setError('Error al enviar mensaje'); }
-    finally { setLoadingMsgs(false); }
+      } else if (data && !data.ok) { setError(data.error || 'Error al enviar'); setAgentWorking(false); }
+    } catch { setError('Error al enviar mensaje'); setAgentWorking(false); }
   }, [input, active, model]);
+
+  // ---- Polling: consulta la conversación hasta que Hermes termine ----
+  const pollForAssistant = useCallback(async (cid, userText) => {
+    const deadline = Date.now() + 15 * 60 * 1000; // máx 15 min
+    let running = true;
+    const tick = async () => {
+      if (!running) return;
+      if (Date.now() > deadline) { setError('El agente no respondió a tiempo.'); setAgentWorking(false); return; }
+      try {
+        const data = await api.getCrmConversation(cid);
+        if (data && data.ok) {
+          const msgs = data.messages || [];
+          const assistantCount = msgs.filter(m => m.role === 'assistant').length;
+          if (assistantCount > 0) {
+            // ya está la respuesta -> reemplazar el estado con lo persistido
+            setMessages(msgs);
+            setCrmConvos((prev) => prev.map(c => c.id === cid
+              ? { ...c, preview: userText.slice(0, 80), message_count: msgs.length }
+              : c));
+            setAgentWorking(false);
+            return;
+          }
+        }
+      } catch { /* seguir intentando */ }
+      setTimeout(tick, 4000);
+    };
+    setTimeout(tick, 4000);
+    setAgentWorking(true);
+    // limpiar el loop si el componente se desmonta
+    return () => { running = false; };
+  }, []);
 
   // ---- Renombrar ----
   const startRename = () => {
@@ -409,6 +448,15 @@ const ChatView = () => {
             {error && (
               <div className="bg-red-500/15 text-red-300 border border-red-500/30 rounded-lg px-3 py-2 text-sm">{error}</div>
             )}
+            {agentWorking && (
+              <div className="flex items-center gap-3 bg-cyan-500/10 border border-cyan-500/20 rounded-xl px-4 py-3">
+                <span className="inline-block w-4 h-4 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
+                <div className="text-sm text-gray-300">
+                  <span className="font-medium text-cyan-300">Hermes está trabajando…</span>
+                  <span className="text-gray-500"> (puede tomar unos segundos o minutos, agente de fondo)</span>
+                </div>
+              </div>
+            )}
             {loadingMsgs ? (
               <div className="text-center text-gray-400 py-8">Cargando conversación…</div>
             ) : messages.length === 0 ? (
@@ -456,11 +504,11 @@ const ChatView = () => {
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder={activeIsCrm ? 'Escribí tu mensaje…' : 'Seleccioná una conversación para responder'}
-                disabled={!activeIsCrm}
+                placeholder={agentWorking ? 'El agente está respondiendo…' : (activeIsCrm ? 'Escribí tu mensaje…' : 'Seleccioná una conversación para responder')}
+                disabled={!activeIsCrm || agentWorking}
                 className="flex-1 min-w-0 px-4 py-2.5 bg-gray-800 border border-gray-700 rounded-lg text-gray-100 focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:border-transparent disabled:opacity-50"
               />
-              <button type="submit" disabled={!activeIsCrm || !input.trim()} className="px-4 py-2.5 bg-gradient-to-r from-cyan-400 to-blue-500 text-white rounded-lg hover:from-cyan-300 hover:to-blue-400 transition font-medium disabled:opacity-50">Enviar</button>
+              <button type="submit" disabled={!activeIsCrm || agentWorking || !input.trim()} className="px-4 py-2.5 bg-gradient-to-r from-cyan-400 to-blue-500 text-white rounded-lg hover:from-cyan-300 hover:to-blue-400 transition font-medium disabled:opacity-50">Enviar</button>
             </form>
             <p className="text-[11px] text-gray-600 mt-2">{totalVisible} conversaciones · Hermes de fondo · <kbd className="text-gray-500">⌘K</kbd> buscar</p>
           </div>

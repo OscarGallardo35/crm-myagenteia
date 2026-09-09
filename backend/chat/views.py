@@ -14,6 +14,26 @@ from chat.serializers import (
 )
 import os
 from openai import OpenAI
+import json
+import uuid
+from urllib.parse import urljoin
+
+# Gateway (api_server de Hermes) — chat de sesión no-stream
+_GW = os.environ.get('HERMES_GATEWAY_URL', '').rstrip('/')  # http://10.0.3.1:8642/v1
+
+def _gateway_base():
+    """Base URL sin el sufijo '/v1' (que es de OpenAI-compat). El [/v]2 api del
+    gateway vive en /api/...  Quitar '/v1' completo, no solo el último char."""
+    if _GW.endswith('/v1'):
+        return _GW[:-3]
+    return _GW
+
+GATEWAY_CHAT_URL = (_GW[:-3] if _GW.endswith('/v1') else _GW) + '/api/sessions/{}/chat' if _GW else ''
+GATEWAY_SESSIONS_URL = (_GW[:-3] if _GW.endswith('/v1') else _GW) + '/api/sessions' if _GW else ''
+GATEWAY_LOCK_URL = (_GW[:-3] if _GW.endswith('/v1') else _GW) + '/api/sessions/{}/model' if _GW else ''
+
+def uuid_hex8():
+    return uuid.uuid4().hex[:8]
 class ModelConfigViewSet(viewsets.ModelViewSet):
     queryset = ModelConfig.objects.all()
     serializer_class = ModelConfigSerializer
@@ -247,61 +267,246 @@ def crm_conversation_message(request, pk):
         'created_at': m.created_at.isoformat() if m.created_at else None,
     }}
 
-    # Si es un mensaje de usuario, pedir respuesta a Hermes (proxy de fondo)
+    # Si es un mensaje de usuario, lanzar el agente Hermes en BACKGROUND (no bloquear).
+    # El frontend hace polling y descubre la respuesta cuando el agente termina.
     if role in ('user', 'human'):
-        asst = _ask_hermes(request, pk, content, request.data.get('model') or None)
-        if asst is not None:
-            am = Message.objects.create(conversation=c, role='assistant', content=asst)
-            c.save()
-            response_data['assistant_message'] = {
-                'role': 'assistant', 'content': am.content,
-                'created_at': am.created_at.isoformat() if am.created_at else None,
-            }
-        else:
-            response_data['assistant_error'] = True
+        model = request.data.get('model') or None
+        response_data['agent_pending'] = True
+        response_data['agent_poll_path'] = f'/api/chat/conversations/{pk}/'
+        import threading
+        t = threading.Thread(
+            target=_run_agent_background,
+            args=(request.user.id, pk, content, model),
+            daemon=True,
+        )
+        t.start()
+        response_data['agent_started'] = True
 
     return Response(response_data, status=201)
 
 
-def _ask_hermes(request, conversation_pk, user_content, requested_model=None):
-    """Envía el contexto de la conversación al proxy Hermes y devuelve la respuesta."""
+def _run_agent_background(user_id, conversation_pk, user_content, requested_model):
+    """Ejecuta el turno del agente Hermes en un hilo. Guarda la respuesta del
+    assistant en la conversación cuando termina."""
+    try:
+        asst = _ask_hermes(user_id, conversation_pk, user_content, requested_model)
+    except Exception:
+        asst = None
+    try:
+        c = Conversation.objects.filter(pk=conversation_pk).first()
+        if c and asst:
+            Message.objects.create(conversation=c, role='assistant', content=asst)
+            c.save()
+    except Exception:
+        pass
+    finally:
+        try:
+            from django.db import connections
+            connections.close_all()
+        except Exception:
+            pass
+
+
+def _ask_hermes(user_id, conversation_pk, user_content, requested_model=None):
+    """Ejecuta un turno del agente Hermes real via el api_server del gateway
+    (POST /api/sessions/{id}/chat, no-stream). Thread-safe: recibe user_id, no request."""
+    if not GATEWAY_CHAT_URL:
+        return _ask_proxy_nous(user_id, conversation_pk, user_content, requested_model)
+
+    key = _read_gateway_key()
+    if not key:
+        return _ask_proxy_nous(user_id, conversation_pk, user_content, requested_model)
+
+    # Modelo: el del selector; si viene empty o 'hermes-agent' (que resuelve mal al
+    # default deepseek → Nous sin créditos → Nvidia 529), usar longcat free estable.
+    model = (requested_model or '').strip()
+    if not model or model == 'hermes-agent':
+        model = 'meituan/longcat-2.0:free'
+
+    try:
+        from django.contrib.auth.models import User
+        convo = Conversation.objects.filter(pk=conversation_pk).first()
+        user = User.objects.filter(pk=user_id).first()
+        if not convo or not user:
+            return None
+
+        # 1) Obtener/crear la sesión de agente Hermes mapeada a esta conversación.
+        agent_session_id = _get_agent_session_id(user, convo, model)
+
+        # 2) Enviar el turno al gateway (no-stream, respuesta JSON). Sin fijar modelo:
+        #    el agente usa su default/global (deepseek fireworks / router menos-usado),
+        #    que responde en segundos. Fijar modelo explícito cae en la cadena de
+        #    fallbacks y no termina.
+        import urllib.request
+        import urllib.error
+        data = {
+            "message": user_content,  # el endpoint espera string, no dict {role,content}
+            "system_message": _CRM_SYSTEM_PROMPT,
+        }
+        body = json.dumps(data).encode()
+        req = urllib.request.Request(
+            f"{GATEWAY_CHAT_URL.format(agent_session_id)}", data=body,
+            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json",
+                     "X-Hermes-Session-Id": agent_session_id, "User-Agent": "crm-bot"})
+        try:
+            with urllib.request.urlopen(req, timeout=600) as r:
+                data = json.load(r)
+        except urllib.error.HTTPError as e:
+            # si la sesión no existe, recrearla una vez
+            if e.code == 404:
+                agent_session_id = _create_agent_session_sub(user, convo.id, model)
+                if agent_session_id:
+                    convo.memory = f"hermes_session:{agent_session_id}"
+                    convo.save()
+                    data = {
+                        "model": model,
+                        "message": user_content,
+                        "system_message": _CRM_SYSTEM_PROMPT,
+                    }
+                    body = json.dumps(data).encode()
+                    req = urllib.request.Request(
+                        f"{GATEWAY_CHAT_URL.format(agent_session_id)}", data=body,
+                        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json",
+                                 "X-Hermes-Session-Id": agent_session_id, "User-Agent": "crm-bot"})
+                    with urllib.request.urlopen(req, timeout=600) as r2:
+                        data = json.load(r2)
+                else:
+                    return _ask_proxy_nous(user_id, conversation_pk, user_content, requested_model)
+            else:
+                return _ask_proxy_nous(user_id, conversation_pk, user_content, requested_model)
+
+        content = (data.get("message") or {}).get("content")
+        return (content or "").strip() or None
+    except Exception:
+        return _ask_proxy_nous(user_id, conversation_pk, user_content, requested_model)
+
+
+_CRM_SYSTEM_PROMPT = (
+    "Sos el asistente de IA del CRM MyAgenteIA. Respondé con claridad y en el "
+    "idioma que se te habla. Si el usuario pide acciones técnicas podes razonar y "
+    "proponer, pero sin ejecutar comandos destructivos sin confirmación."
+)
+
+
+def _get_agent_session_id(user, convo, model):
+    """Reusa la sesión de agente Hermes de esta conversación o la crea.
+    session id UNICO por conversación (no hash compartido) para evitar
+    colisiones de turnos simultáneos en el api_server."""
+    stored = (convo.memory or "")
+    if stored.startswith("hermes_session:"):
+        return stored.split(":", 1)[1].strip()
+    sid = _create_agent_session_sub(user, convo.id, model)
+    if sid:
+        convo.memory = f"hermes_session:{sid}"
+        convo.save()
+    return sid
+
+
+def _lock_agent_session_model(user, session_id, model):
+    """Fija el modelo de la sesión del agente (session model lock) para que el agente
+    USE ese modelo sin caer en la cadena de fallbacks. Es el equivalente de /model
+    aplicado a la sesión — 'que el selector setee el modelo', como pediste."""
+    import urllib.request
+    import urllib.error
+    key = _read_gateway_key()
+    if not key or not GATEWAY_LOCK_URL:
+        return False
+    lock_model = model if model and model != 'hermes-agent' else 'meituan/longcat-2.0:free'
+    # derivar provider desde el id (nous, openrouter, etc)
+    provider = (lock_model.split("/")[0] if "/" in lock_model else "").split(":")[0]
+    if not provider or provider in ("meituan", "poolside", "inclusionai", "stepfun"):
+        provider = "nous"
+    body = json.dumps({
+        "model": lock_model,
+        "provider": provider,
+    }).encode()
+    req = urllib.request.Request(
+        GATEWAY_LOCK_URL.format(session_id), data=body,
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json",
+                 "User-Agent": "crm-bot"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return True
+    except urllib.error.HTTPError as e:
+        if e.code in (200, 201):
+            return True
+        return False
+    except Exception:
+        return False
+
+
+def _create_agent_session_sub(user, conversation_id, model):
+    """POST /api/sessions — crea una sesión de agente Hermes UNICA por conversación."""
+    import urllib.request
+    import urllib.error
+    key = _read_gateway_key()
+    if not key or not GATEWAY_SESSIONS_URL:
+        return None
+    # modelo a usar: nunca 'hermes-agent' (resuelve mal), siempre uno concreto
+    create_model = model if model and model != 'hermes-agent' else 'meituan/longcat-2.0:free'
+    sid = f"crm_{conversation_id}_{uuid_hex8()}"
+    body = json.dumps({
+        "id": sid, "model": create_model,
+        "source": "api_server",
+    }).encode()
+    req = urllib.request.Request(GATEWAY_SESSIONS_URL, data=body,
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json",
+                 "User-Agent": "crm-bot"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            data = json.load(r)
+            created_id = data.get("session", {}).get("id") or data.get("id") or sid
+            return created_id
+    except urllib.error.HTTPError as e:
+        # 201/200 confirman creada; "exists" también es válido (reusamos)
+        if e.code in (200, 201):
+            return sid
+        return None
+    except Exception:
+        return None
+
+
+def _read_gateway_key():
+    try:
+        env_path = os.environ.get("HERMES_ENV_FILE", "/hermes/.env")
+        if os.path.exists(env_path):
+            with open(env_path) as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("API_SERVER_KEY=") and not line.startswith('#'):
+                        return line.split("=", 1)[1].strip()
+    except Exception:
+        pass
+    return os.environ.get("HERMES_GATEWAY_KEY", "")
+
+
+def _build_history(conversation_pk, user_content):
+    convo = Conversation.objects.filter(pk=conversation_pk).first()
+    history = []
+    if convo:
+        for mm in convo.messages.order_by('created_at')[:12]:
+            if mm.role in ('user', 'assistant'):
+                history.append({'role': mm.role, 'content': mm.content})
+    if not history or history[-1]['role'] != 'user':
+        history.append({'role': 'user', 'content': user_content})
+    return history or [{'role': 'user', 'content': user_content}]
+
+
+def _ask_proxy_nous(user_id, conversation_pk, user_content, requested_model=None):
+    """Fallback: consulta el proxy Nous local (OpenAI client). Thread-safe."""
+    from openai import OpenAI
     proxy_url = os.environ.get('HERMES_PROXY_URL', '').rstrip('/')
     default_model = os.environ.get('HERMES_PROXY_MODEL', 'meituan/longcat-2.0:free')
-    # El modelo elegido en el selector manda; si viene vacío o raro, usar default.
     model = requested_model if requested_model else default_model
-
-    # Los modelos de razonamiento (laguna, ling, step) necesitan más tokens para emitir content.
-    reasoning_models = ('laguna', 'ling', 'step')
-    max_tokens = 1600 if any(k in model for k in reasoning_models) else 800
-
     if not proxy_url:
         return None
+    reasoning_models = ('laguna', 'ling', 'step')
+    max_tokens = 1600 if any(k in model for k in reasoning_models) else 800
     try:
-        # Contexto: últimos mensajes de la conversación (user + assistant)
-        convo = Conversation.objects.filter(pk=conversation_pk, user=request.user).first()
-        history = []
-        if convo:
-            for mm in convo.messages.order_by('created_at')[:12]:
-                if mm.role in ('user', 'assistant'):
-                    history.append({'role': mm.role, 'content': mm.content})
-        # Asegurar que el último mensaje sea el del usuario actual
-        if not history or history[-1]['role'] != 'user':
-            history.append({'role': 'user', 'content': user_content})
-        messages_payload = history or [{'role': 'user', 'content': user_content}]
-
-        client = OpenAI(
-            base_url=proxy_url,
-            api_key='dummy',
-            timeout=120.0,
-            max_retries=0,
-        )
-        resp = client.chat.completions.create(
-            model=model,
-            messages=messages_payload,
-            max_tokens=max_tokens,
-        )
+        history = _build_history(conversation_pk, user_content)
+        client = OpenAI(base_url=proxy_url, api_key='dummy', timeout=120.0, max_retries=0)
+        resp = client.chat.completions.create(model=model, messages=history, max_tokens=max_tokens)
         content = resp.choices[0].message.content
-        # Los de razonamiento a veces dejan content=None y ponen todo en reasoning
         if not content and getattr(resp.choices[0].message, 'reasoning', None):
             content = resp.choices[0].message.reasoning[-2000:]
         return content
