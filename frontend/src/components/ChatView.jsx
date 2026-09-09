@@ -325,6 +325,22 @@ const ChatView = ({ initialSession }) => {
     return () => { running = false; };
   }, []);
 
+  // ---- Reanudar burbuja de procesando al VOLVER (navegar a Agentes y regresar) ----
+  // Si la conversación activa quedó con el último mensaje en role='user' (turno del
+  // agente en curso, aún sin respuesta del asistente), reactivar el polling para que
+  // la respuesta aparezca sola y la luz roja de "procesando" no se pierda.
+  useEffect(() => {
+    if (!active || active.type !== 'crm') return;
+    if (workingConvs[active.id]) return;              // ya estamos procesando
+    if (!messages.length) return;
+    const last = messages[messages.length - 1];
+    if (!last || last.role !== 'user') return;        // sin turno pendiente
+    const baseAssistantCount = messages.filter(m => m.role === 'assistant').length;
+    setWorkingConvs(prev => ({ ...prev, [active.id]: true }));
+    pollForAssistant(active.id, baseAssistantCount);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active?.id, messages, workingConvs]);
+
   // ---- Renombrar ----
   const startRename = () => {
     if (!active || active.type !== 'crm') return;

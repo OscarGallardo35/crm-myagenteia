@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from django.utils import timezone
+from django.db import models
 from django.conf import settings
 
 from .models import AgentTask, AgentLog
@@ -157,19 +158,44 @@ _GATEWAY_LOCK_URL = (_GW + '/api/sessions/{}/model') if _GW else ''
 
 def _run_agent_task(task_id):
     """Dispara la tarea en un sub-agente Hermes real: crea una sesión de agente
-    dedicada en el gateway y le manda la tarea. Actualiza AgentTask al terminar."""
+    dedicada en el gateway y le manda la tarea. Actualiza AgentTask al terminar.
+    Mantiene un heartbeat (heartbeat_at) mientras corre para que el reconciler
+    detecte tareas huérfanas si el backend se reinicia a mitad de camino."""
     import time as _t
+    import threading as _th
     try:
         task = AgentTask.objects.get(pk=task_id)
     except AgentTask.DoesNotExist:
         return
+    # -- heartbeat: actualiza heartbeat_at cada 10s mientras la tarea esté running --
+    _beat_stop = {'stop': False}
+
+    def _heartbeat():
+        while not _beat_stop['stop']:
+            try:
+                AgentTask.objects.filter(pk=task_id, status='running').update(heartbeat_at=timezone.now(), updated_at=timezone.now())
+            except Exception:
+                pass
+            _t.sleep(10)
+
+    def _set_terminal(status, content=None, err=None):
+        _beat_stop['stop'] = True
+        task.status = status
+        task.completed_at = timezone.now()
+        if content is not None:
+            task.output_data = {'summary': content[:2000]} | (task.output_data or {}) if isinstance(task.output_data, dict) else {'summary': content[:2000]}
+        task.save()
+        if err:
+            AgentLog.objects.create(agent_task=task, level='error', message=str(err)[:500])
+        elif content:
+            AgentLog.objects.create(agent_task=task, level='info', message=content[:500])
+
     goal = (task.input_data or {}).get('goal', '')
     model = (task.input_data or {}).get('model') or ''
     if not goal:
-        task.status = 'failed'
-        task.completed_at = timezone.now()
-        task.save()
+        _set_terminal('failed', err='goal vacío')
         return
+    _th.Thread(target=_heartbeat, daemon=True).start()
     try:
         from chat.views import _read_gateway_key
         key = _read_gateway_key()
@@ -181,9 +207,7 @@ def _run_agent_task(task_id):
             if callable(session_id):
                 session_id = None
         if not session_id:
-            task.status = 'failed'
-            task.completed_at = timezone.now()
-            task.save()
+            _set_terminal('failed', err='no se creó sesión en gateway')
             return
         # fijar modelo si viene
         if model and _GW:
@@ -197,26 +221,51 @@ def _run_agent_task(task_id):
         with urllib.request.urlopen(req, timeout=1800) as r:
             result = json.load(r)
         content = (result.get("message") or {}).get("content") or ''
-        task.output_data = {'summary': content[:2000], 'session_id': session_id}
+        session_id_store = session_id
+        _beat_stop['stop'] = True
+        task.output_data = {'summary': content[:2000], 'session_id': session_id_store}
         task.status = 'completed'
         task.completed_at = timezone.now()
         task.save()
         AgentLog.objects.create(agent_task=task, level='info', message=content[:500])
     except Exception as e:
-        task.status = 'failed'
-        task.completed_at = timezone.now()
-        task.save()
-        AgentLog.objects.create(agent_task=task, level='error', message=str(e)[:500])
+        _set_terminal('failed', err=str(e))
+
+
+def _reconcile_stale_tasks(max_heartbeat_secs=90):
+    """Marca como 'failed' las tareas 'running' cuyo heartbeat_at no se actualizó
+    en los últimos max_heartbeat_secs (se perdieron por reinicio del backend,
+    el worker daemon murió y no pudo terminar). Devuelve cuántas reconcilió."""
+    from django.utils import timezone as _tz
+    stale_before = _tz.now() - timedelta(seconds=max_heartbeat_secs)
+    # running con heartbeat viejo o sin heartbeat pero started hace mucho
+    stale = AgentTask.objects.filter(status='running').filter(
+        models.Q(heartbeat_at__lt=stale_before) |
+        models.Q(heartbeat_at__isnull=True, started_at__lt=stale_before)
+    )
+    n = 0
+    for t in stale:
+        t.status = 'failed'
+        t.completed_at = _tz.now()
+        t.save()
+        AgentLog.objects.create(agent_task=t, level='warning',
+                                message='Tarea huérfana: el worker murió (reinicio del backend). Marcada como failed por el reconciler.')
+        n += 1
+    return n
 
 
 @api_view(['GET'])
 def agents_tasks(request):
-    """Historial de tareas de agentes (persistidas en DB)."""
+    """Historial de tareas de agentes (persistidas en DB).
+    Al listar, ejecuta el reconciler: marca failed las tareas running cuyo
+    worker murió (reinicio del backend) y no pudo terminar."""
+    _reconcile_stale_tasks()
     qs = AgentTask.objects.order_by('-created_at')[:50]
     return Response({'ok': True, 'tasks': [{
         'id': t.id, 'name': t.name, 'agent_type': t.agent_type,
         'status': t.status, 'priority': t.priority,
         'created_at': t.created_at.isoformat(),
+        'started_at': t.started_at.isoformat() if t.started_at else None,
         'completed_at': t.completed_at.isoformat() if t.completed_at else None,
         'output_summary': (str(t.output_data.get('summary') or '')[:200] if t.output_data else ''),
     } for t in qs]})
@@ -238,7 +287,7 @@ def agents_launch(request):
         status='running', priority='medium',
         created_by=request.user if request.user.is_authenticated else None,
         input_data={'goal': goal, 'model': model},
-        started_at=timezone.now())
+        started_at=timezone.now(), heartbeat_at=timezone.now())
     # correr el sub-agente real en background
     t = threading.Thread(target=_run_agent_task, args=(task.id,), daemon=True)
     t.start()
