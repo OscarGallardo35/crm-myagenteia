@@ -41,6 +41,13 @@ const ModelSelector = ({ value, onModelChange }) => {
   const options = models.length > 0 ? models : FALLBACK_MODELS;
   const current = value || idFor(options[0]);
 
+  // Evitar provider duplicado: si el label ya contiene el provider, no lo repetir
+  const labelFull = (m) => {
+    const p = m.provider || 'hermes';
+    const l = labelFor(m);
+    return l.toLowerCase().includes(p.toLowerCase()) ? l : `${l} (${p})`;
+  };
+
   return (
     <div className="relative w-full min-w-[180px]">
       <label className="block text-sm font-medium text-gray-300 mb-1">Modelo (Hermes)</label>
@@ -53,7 +60,7 @@ const ModelSelector = ({ value, onModelChange }) => {
           <option value="" disabled>Seleccionar modelo…</option>
           {options.map((m) => (
             <option key={idFor(m)} value={idFor(m)} title={idFor(m)}>
-              {labelFor(m)} ({m.provider || 'hermes'})
+              {labelFull(m)}
             </option>
           ))}
         </select>
