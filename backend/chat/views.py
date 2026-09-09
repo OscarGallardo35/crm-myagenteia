@@ -17,8 +17,9 @@ from chat.serializers import (
     PostSerializer, ScheduledPostSerializer
 )
 import os
-from openai import OpenAI
+import sys
 import json
+from openai import OpenAI
 import uuid
 from urllib.parse import urljoin
 
@@ -489,13 +490,7 @@ def crm_conversation_message(request, pk):
         model = request.data.get('model') or None
         response_data['agent_pending'] = True
         response_data['agent_poll_path'] = f'/api/chat/conversations/{pk}/'
-        import threading
-        t = threading.Thread(
-            target=_run_agent_background,
-            args=(request.user.id, pk, content, model),
-            daemon=True,
-        )
-        t.start()
+        _spawn_agent_process(request.user.id, pk, content, model)
         response_data['agent_started'] = True
 
     return Response(response_data, status=201)
@@ -562,6 +557,45 @@ def _extract_artifacts(content):
     return (out_text, artifacts)
 
 
+def _manage_py():
+    """Ruta al script manage.py dentro del contenedor /app."""
+    return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'manage.py')
+
+
+def _spawn_agent_process(user_id, conversation_pk, user_content, model=None, message=None):
+    """Lanza el turno del agente Hermes en un PROCESO separado (no thread).
+
+    Por qué: las tareas de agente pueden tardar minutos, y si corren en un thread
+    daemon dentro de un worker de gunicorn, un reload/restart de gunicorn (deploy,
+    kill -HUP, crash) mata el worker → mueren sus threads → la tarea se pierde sin
+    guardar la respuesta → la UI queda con la burbuja colgada. Un proceso separado
+    sobrevive al ciclo de vida de los workers y SIEMPRE persiste la respuesta.
+    """
+    import subprocess
+    opts = [sys.executable, _manage_py(), 'run_agent_chat',
+            str(user_id), str(conversation_pk)]
+    # user_content puede ser str o lista multimodal → serializar si es lista
+    if isinstance(user_content, list):
+        u = json.dumps(user_content, ensure_ascii=False)
+    else:
+        u = user_content or ''
+    opts.append(u)
+    opts.append((model or ''))
+    # Si hay un Message (upload multimedia), pasar su pk para que el subproceso
+    # lo recargue y prepare el contenido (transcripción/extracción) allí.
+    message_pk = getattr(message, 'pk', None) if message else None
+    opts.append(str(message_pk if message_pk else ''))
+    try:
+        subprocess.Popen(opts, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         close_fds=True, start_new_session=True)
+    except Exception:
+        # fallback: si no se pudo lanzar el proceso, ejecutar inline (peor caso)
+        try:
+            _run_agent_background(user_id, conversation_pk, user_content, model, message)
+        except Exception:
+            pass
+
+
 def _run_agent_background(user_id, conversation_pk, user_content, requested_model, message=None):
     """Ejecuta el turno del agente Hermes en un hilo. Guarda la respuesta del
     assistant en la conversación cuando termina.
@@ -581,9 +615,15 @@ def _run_agent_background(user_id, conversation_pk, user_content, requested_mode
         asst = None
     try:
         c = Conversation.objects.filter(pk=conversation_pk).first()
-        if c and asst:
-            clean_text, artifacts = _extract_artifacts(asst)
+        if c:
+            clean_text, artifacts = _extract_artifacts(asst or '') if asst else ('', [])
             artifacts = artifacts or []
+            if not clean_text:
+                # SIEMPRE guardar algo: si el agente no devolvió contenido útil, guardar
+                # un fallback claro en vez de nada. Evita la burbuja "Hermes está
+                # trabajando..." colgada para siempre en la UI.
+                clean_text = ('⚠️ El agente no pudo completar la respuesta. '
+                              'Reintentá enviando el mensaje o probá con otro modelo.')
             # Si el agente generó una carpeta de proyecto, agregar artefacto zip
             if _has_project_files(c.id):
                 if not any(a.get('type') == 'zip' for a in artifacts):
@@ -1001,9 +1041,5 @@ def crm_conversation_upload(request, pk):
         model = request.data.get('model') or None
         response_data['agent_pending'] = True
         response_data['agent_poll_path'] = f'/api/chat/conversations/{pk}/'
-        import threading
-        t = threading.Thread(target=_run_agent_background,
-                             args=(request.user.id, pk, None, model, m))
-        t.daemon = True
-        t.start()
+        _spawn_agent_process(request.user.id, pk, content, model, message=m)
     return Response(response_data, status=201)

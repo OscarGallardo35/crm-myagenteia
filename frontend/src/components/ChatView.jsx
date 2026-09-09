@@ -289,7 +289,7 @@ const ChatView = ({ initialSession }) => {
 
   // ---- Polling: consulta la conversación hasta que Hermes termine ----
   const pollForAssistant = useCallback(async (cid, baseAssistantCount) => {
-    const deadline = Date.now() + 15 * 60 * 1000; // máx 15 min
+    const deadline = Date.now() + 32 * 60 * 1000; // máx 32 min (el gateway tarda HASTA 30 min)
     let running = true;
     // marcar SOLO esta conversación como en curso (las otras quedan libres)
     setWorkingConvs(prev => ({ ...prev, [cid]: true }));
