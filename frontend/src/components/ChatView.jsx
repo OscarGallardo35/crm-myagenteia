@@ -449,15 +449,6 @@ const ChatView = () => {
             {error && (
               <div className="bg-red-500/15 text-red-300 border border-red-500/30 rounded-lg px-3 py-2 text-sm">{error}</div>
             )}
-            {agentWorking && (
-              <div className="flex items-center gap-3 bg-cyan-500/10 border border-cyan-500/20 rounded-xl px-4 py-3">
-                <span className="inline-block w-4 h-4 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
-                <div className="text-sm text-gray-300">
-                  <span className="font-medium text-cyan-300">Hermes está trabajando…</span>
-                  <span className="text-gray-500"> (puede tomar unos segundos o minutos, agente de fondo)</span>
-                </div>
-              </div>
-            )}
             {loadingMsgs ? (
               <div className="text-center text-gray-400 py-8">Cargando conversación…</div>
             ) : messages.length === 0 ? (
@@ -465,7 +456,8 @@ const ChatView = () => {
                 {activeIsCrm ? 'Conversación nueva. Escribí tu primer mensaje para iniciar.' : 'Seleccioná una sesión para ver la conversación.'}
               </div>
             ) : (
-              messages.map((msg, i) => (
+              <>
+              {messages.map((msg, i) => (
                 <div key={i} className="group">
                   <div className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                     <div
@@ -499,7 +491,21 @@ const ChatView = () => {
                     </button>
                   </div>
                 </div>
-              ))
+              ))}
+              {/* Burbuja del agente trabajando — dentro del flujo, después del último mensaje */}
+              {agentWorking && (
+                <div className="flex justify-start">
+                  <div className="flex items-center gap-2.5 max-w-[85%] rounded-xl px-3.5 py-3 bg-gray-800/60 border border-cyan-500/20">
+                    <span className="flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-cyan-400 animate-bounce" style={{ animationDelay: '0ms' }} />
+                      <span className="w-2 h-2 rounded-full bg-cyan-400 animate-bounce" style={{ animationDelay: '120ms' }} />
+                      <span className="w-2 h-2 rounded-full bg-cyan-400 animate-bounce" style={{ animationDelay: '240ms' }} />
+                    </span>
+                    <span className="text-sm text-gray-300">Hermes está trabajando…</span>
+                  </div>
+                </div>
+              )}
+              </>
             )}
             <div ref={messagesEndRef} />
           </div>
