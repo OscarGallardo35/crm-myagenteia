@@ -690,7 +690,7 @@ const ChatView = () => {
                         ? 'bg-red-500/25 border-red-500 text-red-300 animate-pulse hover:bg-red-500/40'
                         : 'bg-gray-800 border-gray-700 text-gray-300 hover:text-cyan-400 hover:border-cyan-500/40'}`}
                       title={recording ? 'Detener grabación' : 'Grabar nota de voz'}>
-                {recording ? '⏹' : '🎤'}
+                <span className="text-base leading-none">🎤</span>
               </button>
               <button type="submit" disabled={!activeIsCrm || isActiveWorking || (!input.trim() && attachments.length === 0)}
                       className="px-4 py-2.5 bg-gradient-to-r from-cyan-400 to-blue-500 text-white rounded-lg hover:from-cyan-300 hover:to-blue-400 transition font-medium disabled:opacity-50">Enviar</button>
