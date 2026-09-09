@@ -60,18 +60,18 @@ const ChatView = () => {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center justify-between p-4 border-b border-gray-800">
-        <h2 className="text-lg font-semibold">Conversaciones</h2>
-        <div className="flex items-center space-x-3">
+      <div className="flex flex-wrap items-center gap-3 p-4 border-b border-gray-800">
+        <h2 className="text-lg font-semibold min-w-0">Conversaciones</h2>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 ml-auto min-w-0">
           <ModelSelector value={model} onModelChange={setModel} />
-          <label className="flex items-center space-x-2 text-gray-300">
+          <label className="flex items-center gap-2 text-gray-300 min-w-0 max-w-full">
             <input
               type="checkbox"
               checked={useMemory}
               onChange={(e) => setUseMemory(e.target.checked)}
-              className="h-4 w-4 text-cyan-400"
+              className="h-4 w-4 text-cyan-400 shrink-0"
             />
-            Usar memoria de chat anterior
+            <span className="break-words">Usar memoria de chat anterior</span>
           </label>
         </div>
       </div>

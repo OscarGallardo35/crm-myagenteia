@@ -34,15 +34,15 @@ const Sidebar = ({ activeView, onViewChange }) => {
         />
       )}
 
-      {/* Sidebar: en desktop es flex child del contenedor principal. En móvil es overlay fijo. */}
+      {/* Sidebar: en desktop es flex child. En móvil es overlay fijo (superpuesto, no empuja). */}
       <aside
         className={`flex flex-col bg-gray-900 border-r border-gray-800 transition-transform duration-200 z-50 ${
           mobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
-        }`}
+        } fixed top-0 left-0 h-full lg:relative lg:top-auto lg:left-auto lg:h-screen`}
         style={{
-          // Desktop: ancho fijo. Móvil: se mueve con translate
-          minWidth: '256px',
-          height: '100vh',
+          // Desktop: ancho fijo. Móvil: mismo ancho pero fijo y superpuesto al contenido
+          width: '256px',
+          flexShrink: 0,
         }}
       >
         {/* Logo */}
