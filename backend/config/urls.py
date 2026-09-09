@@ -34,6 +34,9 @@ def api_root(request):
         {"method": "PATCH", "path": "/api/posting/scheduled/<int:pk>/", "name": "scheduledpost-partial-update", "app": "posting", "description": "Actualización parcial de un post programado"},
         {"method": "DELETE", "path": "/api/posting/scheduled/<int:pk>/", "name": "scheduledpost-destroy", "app": "posting", "description": "Eliminar un post programado"},
         {"method": "GET", "path": "/api/agents/", "name": "agents-status", "app": "agents", "description": "Lista de estado de agentes (mock)"},
+        {"method": "GET", "path": "/api/agent-ops/status/", "name": "agents-live", "app": "agents", "description": "Sub-agentes de Hermes en vivo (Nivel 1)"},
+        {"method": "POST", "path": "/api/agent-ops/launch/", "name": "agents-launch", "app": "agents", "description": "Lanza un sub-agente (Nivel 2)"},
+        {"method": "GET", "path": "/api/agent-ops/sessions/", "name": "agents-sessions", "app": "agents", "description": "Sesiones persistentes (Nivel 3)"},
     ]
     return JsonResponse({
         "message": "CRM MyAgenteIA API - Endpoints",
@@ -50,6 +53,7 @@ urlpatterns = [
     path('api/leads/', include('leads.urls')),
     path('api/posting/', include('posting.urls')),
     path('api/agents/', include('agents.urls')),
+    path('api/agent-ops/', include('agents.urls')),
     path('api/security/', include('security.urls')),
 ]
 

@@ -110,6 +110,9 @@ MEDIA_ROOT = '/app/media/'
 FILE_UPLOAD_MAX_MEMORY_SIZE = 20 * 1024 * 1024  # 20 MB
 DATA_UPLOAD_MAX_MEMORY_SIZE = 20 * 1024 * 1024
 
+# Raíz de Hermes montada en el contenedor (/root/.hermes del host -> /hermes)
+HERMES_ROOT = os.environ.get('HERMES_STATE_DB', '/hermes/state.db').replace('/state.db', '') or '/hermes'
+
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 REST_FRAMEWORK = {

@@ -126,6 +126,19 @@ export const api = {
     return fetchWithAuth(`${API_BASE_URL}/agents/status/`);
   },
 
+  // Agent panel (Nivel 1-3): sub-agentes vivos, tareas, sesiones persistentes
+  // Base /api/agent-ops/ (no /api/agents/, que nginx redirige al mock de chat)
+  getLiveAgents: async () => fetchWithAuth('/api/agent-ops/status/'),
+  getLiveAgentDetail: async (id) => fetchWithAuth(`/api/agent-ops/live/${id}/`),
+  getAgentTasks: async () => fetchWithAuth('/api/agent-ops/tasks/'),
+  launchAgentTask: async (payload) => fetchWithAuth('/api/agent-ops/launch/', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  }),
+  getAgentTaskDetail: async (id) => fetchWithAuth(`/api/agent-ops/tasks/${id}/`),
+  getAgentSessions: async () => fetchWithAuth('/api/agent-ops/sessions/'),
+  spawnAgentSession: async (payload) => fetchWithAuth('/api/agent-ops/sessions/spawn/', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  }),
   // Hermes sessions bridge
   getHermesSessions: async (limit = 20) => {
     return fetchWithAuth(`${API_BASE_URL}/hermes/sessions/?limit=${limit}`);
