@@ -42,6 +42,8 @@ services:
       ALLOWED_HOSTS: crm.mercadodigital.pro,localhost
       HERMES_STATE_DB: /hermes/state.db
       HERMES_MODELS_JSON: /hermes/crm/models.json
+      HERMES_PROXY_URL: http://10.0.3.1:8645/v1
+      HERMES_PROXY_MODEL: meituan/longcat-2.0:free
     healthcheck:
       test: ["CMD", "curl", "-f", "-L", "http://localhost:8000/api/"]
       interval: 15s

@@ -12,8 +12,8 @@ from chat.serializers import (
     LeadSerializer, DealSerializer,
     PostSerializer, ScheduledPostSerializer
 )
-
-
+import os
+from openai import OpenAI
 class ModelConfigViewSet(viewsets.ModelViewSet):
     queryset = ModelConfig.objects.all()
     serializer_class = ModelConfigSerializer
@@ -220,7 +220,8 @@ def crm_conversation_detail(request, pk):
 
 @api_view(['POST'])
 def crm_conversation_message(request, pk):
-    """Agrega un mensaje a una conversación del CRM (usuario o asistente)."""
+    """Agrega un mensaje a una conversación del CRM. Si es del usuario, consulta el
+    proxy Hermes y guarda la respuesta del asistente (chat bidireccional)."""
     try:
         c = Conversation.objects.get(pk=pk, user=request.user)
     except Conversation.DoesNotExist:
@@ -231,7 +232,58 @@ def crm_conversation_message(request, pk):
         return Response({'ok': False, 'error': 'content requerido'}, status=400)
     m = Message.objects.create(conversation=c, role=role, content=content)
     c.save()  # actualizar updated_at
-    return Response({'ok': True, 'message': {
+
+    response_data = {'ok': True, 'message': {
         'role': m.role, 'content': m.content,
         'created_at': m.created_at.isoformat() if m.created_at else None,
-    }}, status=201)
+    }}
+
+    # Si es un mensaje de usuario, pedir respuesta a Hermes (proxy de fondo)
+    if role in ('user', 'human'):
+        asst = _ask_hermes(request, pk, content)
+        if asst is not None:
+            am = Message.objects.create(conversation=c, role='assistant', content=asst)
+            c.save()
+            response_data['assistant_message'] = {
+                'role': 'assistant', 'content': am.content,
+                'created_at': am.created_at.isoformat() if am.created_at else None,
+            }
+        else:
+            response_data['assistant_error'] = True
+
+    return Response(response_data, status=201)
+
+
+def _ask_hermes(request, conversation_pk, user_content):
+    """Envía el contexto de la conversación al proxy Hermes y devuelve la respuesta."""
+    proxy_url = os.environ.get('HERMES_PROXY_URL', '').rstrip('/')
+    model = os.environ.get('HERMES_PROXY_MODEL', 'meituan/longcat-2.0:free')
+    if not proxy_url:
+        return None
+    try:
+        # Contexto: últimos mensajes de la conversación (user + assistant)
+        convo = Conversation.objects.filter(pk=conversation_pk, user=request.user).first()
+        history = []
+        if convo:
+            for mm in convo.messages.order_by('created_at')[:12]:
+                if mm.role in ('user', 'assistant'):
+                    history.append({'role': mm.role, 'content': mm.content})
+        # Asegurar que el último mensaje sea el del usuario actual
+        if not history or history[-1]['role'] != 'user':
+            history.append({'role': 'user', 'content': user_content})
+        messages_payload = history or [{'role': 'user', 'content': user_content}]
+
+        client = OpenAI(
+            base_url=proxy_url,
+            api_key='dummy',
+            timeout=120.0,
+            max_retries=0,
+        )
+        resp = client.chat.completions.create(
+            model=model,
+            messages=messages_payload,
+            max_tokens=800,
+        )
+        return resp.choices[0].message.content
+    except Exception:
+        return None

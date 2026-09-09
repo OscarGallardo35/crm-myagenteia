@@ -117,18 +117,28 @@ const ChatView = () => {
     }
   }, [isMobile]);
 
-  // ---- Enviar mensaje (chat bidireccional del CRM; por ahora guarda local) ----
+  // ---- Enviar mensaje (chat bidireccional: guarda user + obtiene respuesta de Hermes) ----
   const handleSend = useCallback(async (e) => {
     e.preventDefault();
     const text = input.trim();
     if (!text || !active || active.type !== 'crm') return;
+    setLoadingMsgs(true);
+    setError('');
     try {
-      const u = await api.addCrmMessage(active.id, 'user', text);
+      const data = await api.addCrmMessage(active.id, 'user', text);
       setInput('');
-      setMessages((prev) => [...prev, u.message]);
-      // TODO: conectar con proxy Hermes (8645) para generar respuesta real.
+      if (data && data.ok) {
+        const newMsgs = [data.message];
+        if (data.assistant_message) newMsgs.push(data.assistant_message);
+        setMessages((prev) => [...prev, ...newMsgs]);
+        if (data.assistant_error) setError('No se pudo obtener respuesta (revisá el proxy Hermes).');
+      } else if (data && !data.ok) {
+        setError(data.error || 'Error al enviar');
+      }
     } catch (err) {
       setError('Error al enviar mensaje');
+    } finally {
+      setLoadingMsgs(false);
     }
   }, [input, active]);
 
@@ -328,6 +338,11 @@ const ChatView = () => {
 
           {/* Mensajes */}
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            {error && (
+              <div className="bg-red-500/15 text-red-300 border border-red-500/30 rounded-lg px-3 py-2 text-sm">
+                {error}
+              </div>
+            )}
             {loadingMsgs ? (
               <div className="text-center text-gray-400 py-8">Cargando conversación…</div>
             ) : messages.length === 0 ? (
