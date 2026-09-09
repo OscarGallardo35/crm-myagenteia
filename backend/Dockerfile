@@ -7,6 +7,8 @@ RUN apt-get update && apt-get install -y \
     gcc \
     libpq-dev \
     curl \
+    libgomp1 \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # Instalar dependencias Python

@@ -60,7 +60,7 @@ const Dashboard = () => {
 
   useEffect(() => {
     loadStats();
-    intervalRef.current = setInterval(loadStats, 30000);
+    intervalRef.current = setInterval(loadStats, 3000);
     return () => clearInterval(intervalRef.current);
   }, [loadStats]);
 
@@ -107,6 +107,13 @@ const Dashboard = () => {
       <div className="flex items-center justify-between flex-wrap gap-2">
         <h2 className="text-xl font-bold text-white">Panel del Sistema</h2>
         <div className="flex items-center gap-3 text-xs text-gray-400">
+          <span className="flex items-center gap-1.5">
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+            </span>
+            <span>LIVE · 3s</span>
+          </span>
           <span>{lastUpdated ? `Actualizado ${lastUpdated.toLocaleTimeString('es-AR')}` : ''}</span>
           <button onClick={loadStats} className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded text-white">
             Actualizar

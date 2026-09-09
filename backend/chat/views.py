@@ -562,9 +562,14 @@ def _extract_artifacts(content):
     return (out_text, artifacts)
 
 
-def _run_agent_background(user_id, conversation_pk, user_content, requested_model):
+def _run_agent_background(user_id, conversation_pk, user_content, requested_model, message=None):
     """Ejecuta el turno del agente Hermes en un hilo. Guarda la respuesta del
-    assistant en la conversación cuando termina."""
+    assistant en la conversación cuando termina.
+    Si `message` viene (upload multimedia), su contenido se PREPARA acá dentro del
+    hilo (transcripción de audio, extracción de docs, data URL de imágenes) para NO
+    bloquear el request HTTP que ya devolvió 201."""
+    if message is not None:
+        user_content = _prepare_user_content(message)
     # Si el mensaje lleva imagen (user_content es lista multimodal), la sesión debe
     # usar el modelo VISION para leerla (deepseek-v4-flash-vision-exp).
     vision_model = 'deepseek/deepseek-v4-flash-vision-exp'
@@ -954,6 +959,16 @@ def crm_conversation_upload(request, pk):
     attachments = []
     for f in files:
         mime = f.content_type or 'application/octet-stream'
+        if attachment_type == 'audio' and f.content_type in (None, '', 'application/octet-stream'):
+            ext = os.path.splitext(f.name)[1].lower()
+            if ext == '.wav':
+                mime = 'audio/wav'
+            elif ext in ('.mp3',):
+                mime = 'audio/mpeg'
+            elif ext in ('.ogg',):
+                mime = 'audio/ogg'
+            else:
+                mime = 'audio/webm'
         folder = os.path.join(settings.MEDIA_ROOT, f'{attachment_type}s', str(pk))
         os.makedirs(folder, exist_ok=True)
         ts = int(timezone.now().timestamp())
@@ -988,7 +1003,7 @@ def crm_conversation_upload(request, pk):
         response_data['agent_poll_path'] = f'/api/chat/conversations/{pk}/'
         import threading
         t = threading.Thread(target=_run_agent_background,
-                             args=(request.user.id, pk, _prepare_user_content(m), model))
+                             args=(request.user.id, pk, None, model, m))
         t.daemon = True
         t.start()
     return Response(response_data, status=201)

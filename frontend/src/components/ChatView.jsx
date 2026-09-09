@@ -652,6 +652,13 @@ const ChatView = () => {
                      accept=".pdf,.docx,.doc,.txt,.md,.py,.js,.json,.csv,image/*,audio/*"
                      onChange={(e) => { handleFiles(e.target.files, e.target.files[0]?.type.startsWith('image/') ? 'image' : e.target.files[0]?.type.startsWith('audio/') ? 'audio' : 'document'); e.target.value = ''; }} />
               <div className="flex-1 relative">
+                {/* Luz de estado: verde = listo para enviar, roja pulsando = procesando */}
+                <div className="flex items-center gap-1.5 absolute left-3 top-1/2 -translate-y-1/2 z-10 pointer-events-none">
+                  <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${isActiveWorking
+                    ? 'bg-red-500 animate-pulse shadow-[0_0_8px_rgba(239,68,68,0.8)]'
+                    : (activeIsCrm ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]' : 'bg-gray-600')}`}
+                    title={isActiveWorking ? 'Hermes procesando…' : (activeIsCrm ? 'Listo para enviar' : 'Sin conversación activa')} />
+                </div>
                 <textarea
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
@@ -660,7 +667,7 @@ const ChatView = () => {
                   placeholder={isActiveWorking ? 'El agente está respondiendo…' : (activeIsCrm ? 'Escribí tu mensaje… (Enter para enviar, Shift+Enter nueva línea)' : 'Seleccioná una conversación para responder')}
                   disabled={!activeIsCrm || isActiveWorking}
                   rows={1}
-                  className="w-full px-4 py-2.5 bg-gray-800 border border-gray-700 rounded-lg text-gray-100 focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:border-transparent disabled:opacity-50 resize-none overflow-y-auto"
+                  className="w-full pl-8 pr-4 py-2.5 bg-gray-800 border border-gray-700 rounded-lg text-gray-100 focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:border-transparent disabled:opacity-50 resize-none overflow-y-auto"
                   style={{ minHeight: '42px', maxHeight: '120px' }}
                 />
               </div>

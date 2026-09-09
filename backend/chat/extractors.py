@@ -58,11 +58,14 @@ def extract_document_text(file_path, mime):
 
 
 def transcribe_audio(file_path):
-    """Transcribe audio usando faster-whisper local (el skill audio-transcription de Hermes)."""
+    """Transcribe audio usando faster-whisper local (gratis, sin API).
+    El modelo 'tiny' en int8 corre en CPU ~1-2s por nota de voz corta.
+    Si la librería no está o falla, devuelve '' (el agente igual recibe el
+    nombre del archivo como referencia)."""
     try:
         from faster_whisper import WhisperModel
         model = WhisperModel("tiny", device="cpu", compute_type="int8")
-        segments, info = model.transcribe(file_path, beam_size=5, language="es")
+        segments, info = model.transcribe(file_path, beam_size=1)
         text = " ".join(segment.text for segment in segments)
         return text.strip()
     except Exception:
