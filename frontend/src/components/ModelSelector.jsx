@@ -21,7 +21,7 @@ function idFor(m) {
   return m.id || m.model || String(m);
 }
 
-const ModelSelector = ({ value, onModelChange }) => {
+const ModelSelector = ({ value, onModelChange, compact }) => {
   const [models, setModels] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -49,13 +49,13 @@ const ModelSelector = ({ value, onModelChange }) => {
   };
 
   return (
-    <div className="relative w-full min-w-[180px]">
-      <label className="block text-sm font-medium text-gray-300 mb-1">Modelo (Hermes)</label>
+    <div className={`relative ${compact ? 'w-auto min-w-0' : 'w-full min-w-[180px]'}`}>
+      {!compact && <label className="block text-sm font-medium text-gray-300 mb-1">Modelo (Hermes)</label>}
       <div className="relative">
         <select
           value={current}
           onChange={(e) => onModelChange(e.target.value)}
-          className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-gray-100 focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:border-transparent appearance-none truncate"
+          className={`${compact ? 'w-auto max-w-[180px]' : 'w-full'} px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-gray-100 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:border-transparent appearance-none truncate`}
         >
           <option value="" disabled>Seleccionar modelo…</option>
           {options.map((m) => (

@@ -165,43 +165,53 @@ def _business_stats():
 
 
 def _model_rate_limits():
-    """Rate limits y salud REALES por modelo (tracking + catálogo)."""
+    """Rate limits y salud REALES por modelo (catálogo + tracking)."""
     tracking = _model_tracking()
     catalog = _model_catalog()
-    try:
-        catalog_ids = {m.get("id") for m in catalog if m.get("id")}
-    except AttributeError:
-        catalog_ids = set()
 
-    # catalog IDs suelen ser "provider/model" como en el tracking (key "provider::model")
-    def norm(k):
-        return k.replace("::", "/")
-
-    free_markers = ("free", ":free", "free")
-    out = []
+    # index de tracking por id normalizado (claves "provider::model" -> "provider/model")
+    tmap = {}
     for key, val in tracking.items():
-        mid = norm(key)
-        free = any(mk in mid.lower() for mk in ("free",))
+        tmap[key.replace("::", "/")] = val
+
+    out = []
+    # 1) SIEMPRE el catálogo real (lo que usa el selector de modelos del CRM)
+    for m in catalog:
+        mid = m.get("id") or m.get("model") or ""
+        if not mid:
+            continue
+        # catalogar como free si el id lo indica o el label (ej. "LongCat 2.0 - free")
+        id_free = "free" in mid.lower() or ":free" in mid.lower()
+        lbl_free = "free" in (m.get("label") or "").lower()
+        t = tmap.get(mid, {})
         out.append({
             "model": mid,
-            "free": free,
+            "label": m.get("label"),
+            "provider": m.get("provider"),
+            "free": bool(id_free or lbl_free),
+            "success_count": t.get("success_count", 0),
+            "failure_count": t.get("failure_count", 0),
+            "consecutive_failures": t.get("consecutive_failures", 0),
+            "last_used": t.get("last_used"),
+            "last_failure": t.get("last_failure"),
+        })
+    # 2) modelos con tracking que no estén en el catálogo
+    seen = {o["model"] for o in out}
+    for key, val in tracking.items():
+        mid = key.replace("::", "/")
+        if mid in seen:
+            continue
+        out.append({
+            "model": mid, "label": mid, "provider": None,
+            "free": "free" in mid.lower(),
             "success_count": val.get("success_count", 0),
             "failure_count": val.get("failure_count", 0),
             "consecutive_failures": val.get("consecutive_failures", 0),
             "last_used": val.get("last_used"),
             "last_failure": val.get("last_failure"),
         })
-    out.sort(key=lambda x: x["last_used"] or 0, reverse=True)
-    # si no hay tracking, al menos listar catálogo
-    if not out:
-        for m in catalog:
-            mid = m.get("id") or m.get("model") or ""
-            free = "free" in mid.lower()
-            out.append({
-                "model": mid, "free": free,
-                "success_count": 0, "failure_count": 0,
-                "consecutive_failures": 0, "last_used": None, "last_failure": None,
-            })
+    # ordenar: con uso primero (por last_used), luego el resto; y marcar free
+    out.sort(key=lambda x: (x["last_used"] is None, -(x["last_used"] or 0)))
     return out
 
 

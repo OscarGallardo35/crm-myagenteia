@@ -218,7 +218,9 @@ const ChatView = () => {
     e.preventDefault();
     const text = input.trim();
     if ((!text && attachments.length === 0) || !active || active.type !== 'crm') return;
-    const baseLen = messages.length + 1;
+    // contar assistants YA presentes (para esperar UNO nuevo, no confundir con
+    // un user extra o con el historial previo)
+    const baseAssistantCount = messages.filter(m => m.role === 'assistant').length;
     setInput('');
     const currentAttachments = attachments;
     setAttachments([]);
@@ -245,7 +247,7 @@ const ChatView = () => {
           ? { ...c, preview: text.slice(0, 80) || `[${currentAttachments[0]?.type}]`, message_count: (c.message_count || 0) + 1 }
           : c));
         if (result.agent_pending) {
-          pollForAssistant(active.id, baseLen);
+          pollForAssistant(active.id, baseAssistantCount);
         } else if (result.message?.role === 'assistant') {
           setMessages(prev => [...prev, result.message]);
           setWorkingConvs(prev => { const p = {...prev}; delete p[active.id]; return p; });
@@ -261,7 +263,7 @@ const ChatView = () => {
   }, [input, attachments, active, model, messages.length]);
 
   // ---- Polling: consulta la conversación hasta que Hermes termine ----
-  const pollForAssistant = useCallback(async (cid, baseLen) => {
+  const pollForAssistant = useCallback(async (cid, baseAssistantCount) => {
     const deadline = Date.now() + 15 * 60 * 1000; // máx 15 min
     let running = true;
     // marcar SOLO esta conversación como en curso (las otras quedan libres)
@@ -277,8 +279,11 @@ const ChatView = () => {
         const data = await api.getCrmConversation(cid);
         if (data && data.ok) {
           const msgs = data.messages || [];
-          // esperar UNA respuesta nueva: que el nº de mensajes supere el baseLen
-          if (msgs.length > baseLen) {
+          // esperar UN assistant NUEVO (que aparezca uno más que al enviar).
+          // Contar assistants evita: (1) historial previo que apague la burbuja
+          // prematuramente, (2) un user extra (mensajes seguidos) que la corte.
+          const assistantCount = msgs.filter(m => m.role === 'assistant').length;
+          if (assistantCount > baseAssistantCount) {
             setMessages(msgs);
             setCrmConvos((prev) => prev.map(c => c.id === cid
               ? { ...c, preview: (msgs[msgs.length - 1]?.content || '').slice(0, 80), message_count: msgs.length }
@@ -374,19 +379,20 @@ const ChatView = () => {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex flex-wrap items-center gap-3 p-3 border-b border-gray-800">
-        <h2 className="text-lg font-semibold min-w-0">Hermes — Historial</h2>
-        <div className="flex flex-wrap items-center gap-y-2 ml-auto min-w-0">
+      <div
+        className="flex items-center gap-3 p-3 pr-2 border-b border-gray-800"
+        style={{ paddingLeft: sidebarOpen ? 12 : 36 }}
+      >
+        <h2 className="text-base font-semibold min-w-0 shrink-0">Hermes — Historial</h2>
+        <div className="flex items-center gap-2 ml-auto min-w-0 shrink-0">
           <button
             onClick={() => { setSearchOpen(true); setTimeout(() => searchRef.current?.focus(), 50); }}
-            className="flex items-center gap-2 px-3 py-1.5 bg-gray-800/70 border border-gray-700 rounded-lg text-gray-300 hover:text-white hover:border-gray-600 transition text-sm"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-gray-800/70 border border-gray-700 rounded-lg text-gray-300 hover:text-white hover:border-gray-600 transition text-sm"
             title="Buscar en el historial (Ctrl+K)"
           >
             <span>🔍</span>
-            <span className="hidden sm:inline">Buscar…</span>
-            <kbd className="hidden sm:inline text-[10px] bg-gray-700 px-1.5 py-0.5 rounded text-gray-400">⌘K</kbd>
           </button>
-          <ModelSelector value={model} onModelChange={handleModelChange} />
+          <ModelSelector compact value={model} onModelChange={handleModelChange} />
         </div>
       </div>
 
@@ -486,15 +492,15 @@ const ChatView = () => {
           </div>
         </aside>
 
-        {/* Botón colapsar desktop */}
+        {/* Botón colapsar desktop — dentro de la cabecera, primera posición */}
         {!isMobile && (
           <button
             onClick={() => setSidebarOpen(!sidebarOpen)}
             aria-label={sidebarOpen ? 'Contraer historial' : 'Expandir historial'}
-            className="absolute top-1/2 -translate-y-1/2 z-20 w-6 h-12 flex items-center justify-center bg-gray-800 border border-gray-700 rounded-r-lg text-gray-300 hover:text-white hover:bg-gray-700 transition select-none"
-            style={{ left: sidebarOpen ? 272 : 0 }}
+            title={sidebarOpen ? 'Contraer historial' : 'Expandir historial'}
+            className="flex items-center justify-center w-8 h-8 shrink-0 bg-gray-800 border border-gray-700 rounded-lg text-gray-300 hover:text-white hover:bg-gray-700 transition select-none"
           >
-            <span className="text-sm font-bold">{sidebarOpen ? '<' : '>'}</span>
+            <span className="text-lg font-bold leading-none">{sidebarOpen ? '‹' : '›'}</span>
           </button>
         )}
 
