@@ -157,6 +157,18 @@ export const api = {
       body: JSON.stringify({ title }),
     });
   },
+  pinCrmConversation: async (id, pinned) => {
+    return fetchWithAuth(`${API_BASE_URL}/conversations/${id}/`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pinned }),
+    });
+  },
+  deleteCrmConversation: async (id) => {
+    return fetchWithAuth(`${API_BASE_URL}/conversations/${id}/`, {
+      method: 'DELETE',
+    });
+  },
   addCrmMessage: async (id, role, content, model) => {
     return fetchWithAuth(`${API_BASE_URL}/conversations/${id}/message/`, {
       method: 'POST',

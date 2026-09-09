@@ -18,6 +18,7 @@ class Conversation(models.Model):
     model_config = models.ForeignKey(ModelConfig, on_delete=models.SET_NULL, null=True, blank=True)
     # Optional memory between chats: we can store a summary or key points
     memory = models.TextField(blank=True, null=True)
+    pinned = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

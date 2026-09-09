@@ -153,13 +153,14 @@ def agents_list(request):
 def crm_conversations(request):
     """Lista o crea conversaciones del CRM (sesiones del panel)."""
     if request.method == 'GET':
-        convos = Conversation.objects.filter(user=request.user).order_by('-updated_at')
+        convos = Conversation.objects.filter(user=request.user).order_by('-pinned', '-updated_at')
         data = [{
             'id': c.id,
             'title': c.title or 'Nueva conversación',
             'created_at': c.created_at.isoformat() if c.created_at else None,
             'updated_at': c.updated_at.isoformat() if c.updated_at else None,
             'model': c.model_config.name if c.model_config else '',
+            'pinned': c.pinned,
             'message_count': c.messages.count(),
             'preview': (c.messages.order_by('-created_at').first().content[:80]
                         if c.messages.first() else ''),
@@ -185,13 +186,18 @@ def crm_conversations(request):
     return Response({'ok': False, 'errors': serializer.errors}, status=400)
 
 
-@api_view(['GET', 'PATCH'])
+@api_view(['GET', 'PATCH', 'DELETE'])
 def crm_conversation_detail(request, pk):
-    """Retoma (GET data) o renombra (PATCH title) una conversación del CRM."""
+    """Retoma (GET), renombra/fija (PATCH) o elimina (DELETE) una conversación del CRM."""
     try:
         c = Conversation.objects.get(pk=pk, user=request.user)
     except Conversation.DoesNotExist:
         return Response({'ok': False, 'error': 'Conversación no encontrada'}, status=404)
+
+    # DELETE: eliminar conversación + mensajes
+    if request.method == 'DELETE':
+        c.delete()
+        return Response({'ok': True, 'deleted': pk})
 
     if request.method == 'GET':
         msgs = c.messages.order_by('created_at')
@@ -210,12 +216,15 @@ def crm_conversation_detail(request, pk):
             } for m in msgs],
         })
 
-    # PATCH: renombrar
+    # PATCH: renombrar o fijar/desfijar
     title = request.data.get('title')
     if title is not None:
         c.title = str(title).strip()
         c.save()
-    return Response({'ok': True, 'title': c.title})
+    if 'pinned' in request.data:
+        c.pinned = bool(request.data['pinned'])
+        c.save()
+    return Response({'ok': True, 'title': c.title, 'pinned': c.pinned})
 
 
 @api_view(['POST'])
