@@ -66,6 +66,22 @@ export default function SecurityPanel() {
     }
   }, []);
 
+  // Resolver la geo de IPs nuevas al montar (en background)
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const r = await api.securityGeoRefresh();
+        if (active && r && r.ok && r.resolved > 0) {
+          // re-cargar para mostrar los países nuevos
+          const a = await api.getSecurityAttempts(150);
+          if (a && a.ok) setAttempts(a.attempts || []);
+        }
+      } catch { /* silencioso */ }
+    })();
+    return () => { active = false; };
+  }, []);
+
   useEffect(() => { loadAll(); }, [loadAll]);
 
   const manualBlock = async (ip) => {
@@ -139,6 +155,7 @@ export default function SecurityPanel() {
                 <thead className="sticky top-0 bg-gray-800 text-gray-400 text-left">
                   <tr>
                     <th className="px-3 py-2">IP</th>
+                    <th className="px-3 py-2">Origen</th>
                     <th className="px-3 py-2">Email</th>
                     <th className="px-3 py-2">Resultado</th>
                     <th className="px-3 py-2">Hora</th>
@@ -148,6 +165,9 @@ export default function SecurityPanel() {
                   {attempts.map(a => (
                     <tr key={a.id} className="border-t border-gray-700/60">
                       <td className="px-3 py-2 font-mono text-gray-300">{a.ip}</td>
+                      <td className="px-3 py-2 text-gray-400">
+                        <GeoInfo geo={a.geo} />
+                      </td>
                       <td className="px-3 py-2 text-gray-300">{a.email || '—'}</td>
                       <td className="px-3 py-2">
                         <span className={`text-[11px] px-2 py-0.5 rounded-full ${a.success
@@ -262,4 +282,23 @@ function Metric({ label, value, warn }) {
 
 function Empty({ text }) {
   return <div className="px-4 py-8 text-center text-gray-500 text-sm">{text}</div>;
+}
+
+// Muestra la geolocalización de una IP (país + ciudad + ISP)
+function GeoInfo({ geo }) {
+  if (!geo) return <span className="text-gray-600">—</span>;
+  if (geo.is_local) return <span className="text-gray-500">Local/Interna</span>;
+  const cc = geo.country;
+  const flag = cc ? cc.toLowerCase().replace(/./g, c => String.fromCodePoint(c.charCodeAt(0) + 127397)) : '';
+  const parts = [geo.city, geo.region].filter(Boolean);
+  const loc = parts.join(', ');
+  return (
+    <div className="flex items-center gap-1.5 text-gray-400">
+      {flag && <span className="text-sm">{flag}</span>}
+      <span className="truncate max-w-[140px]">
+        {geo.country_name || geo.country || '?'}
+        {loc ? ` · ${loc}` : ''}
+      </span>
+    </div>
+  );
 }

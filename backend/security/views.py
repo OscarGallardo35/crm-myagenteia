@@ -140,7 +140,7 @@ def security_summary(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def security_attempts(request):
-    """Intentos de login registrados (paginados liviano)."""
+    """Intentos de login registrados (con geo de caché) — paginado liviano."""
     sl = int(request.query_params.get('limit', 100))
     sl = min(max(sl, 1), 500)
     since = request.query_params.get('since')  # h (horas) opcional
@@ -151,11 +151,17 @@ def security_attempts(request):
         except ValueError:
             pass
     attempts = list(qs[:sl])
+    # geo de las IPs única (caché si existe)
+    from .geo import geo_for_ip_list
+    ips = {a.ip.split('%')[0] for a in attempts}
+    geo = geo_for_ip_list(ips)
     return Response({
         'ok': True,
+        'geo_pending': True,  # el frontend puede pedir refrescar geo
         'attempts': [{
             'id': a.id, 'ip': a.ip, 'email': a.email, 'success': a.success,
             'user_agent': a.user_agent, 'created_at': a.created_at.isoformat(),
+            'geo': geo.get(a.ip.split('%')[0]),
         } for a in attempts],
     })
 
@@ -251,6 +257,45 @@ def security_unblock(request):
     from .ip_throttle import mark_quiet
     b = mark_quiet(ip)
     return Response({'ok': True, 'ip': ip, 'status': b.status if b else 'not_found'})
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def security_geo_refresh(request):
+    """Resuelve la geo de IPs sin caché (límite por llamada). El frontend lo llama
+    al montar. Recolecta IPs de attempts/blocks/ssh y consulta ipinfo para las
+    que no estén cacheadas, hasta MAX."""
+    from . import geo as geo_mod
+    from .models import IpGeoCache
+    max_resolve = int(request.query_params.get('max', 8))
+    max_resolve = min(max_resolve, 20)
+
+    # recolectar IPs recientes de las 3 fuentes
+    ips = set()
+    now = timezone.now()
+    for a in LoginAttempt.objects.filter(created_at__gte=now - timedelta(hours=48))[:300]:
+        ips.add(a.ip)
+    for b in IpBlock.objects.all()[:300]:
+        ips.add(b.ip)
+    # solo las que NO están en caché
+    cached_ips = set(IpGeoCache.objects.filter(ip__in=ips).values_list('ip', flat=True))
+    pending = [i for i in ips if i not in cached_ips and not geo_mod._is_private(i)][:max_resolve]
+
+    resolved = {}
+    errors = 0
+    for ip in pending:
+        try:
+            resolved[ip] = geo_mod.get_ip_geo(ip)
+        except Exception:
+            errors += 1
+
+    return Response({
+        'ok': True,
+        'pending': len(pending),
+        'resolved': len(resolved),
+        'errors': errors,
+        'stale': len(ips) - len(cached_ips),
+    })
 
 
 @api_view(['GET'])

@@ -9,4 +9,5 @@ urlpatterns = [
     path('block/', views.security_block_manual),
     path('unblock/', views.security_unblock),
     path('check/', views.security_check),
+    path('geo/refresh/', views.security_geo_refresh),
 ]

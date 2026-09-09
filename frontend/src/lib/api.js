@@ -190,6 +190,7 @@ export const api = {
   getSecurityAttempts: async (limit = 100) => fetchWithAuth(`${SECURITY_BASE_URL}/attempts/?limit=${limit}`),
   getSecurityBlocks: async () => fetchWithAuth(`${SECURITY_BASE_URL}/blocks/`),
   getSecuritySsh: async (limit = 100) => fetchWithAuth(`${SECURITY_BASE_URL}/ssh/?limit=${limit}`),
+  securityGeoRefresh: async () => fetchWithAuth(`${SECURITY_BASE_URL}/geo/refresh/?max=12`),
   securityBlockIp: async (ip) => fetchWithAuth(`${SECURITY_BASE_URL}/block/`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ip }),
   }),

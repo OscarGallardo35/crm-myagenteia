@@ -74,3 +74,22 @@ class SshEvent(models.Model):
 
     def __str__(self):
         return f"SSH {self.event_type} {self.ip} as {self.username}"
+
+
+class IpGeoCache(models.Model):
+    """Caché de geolocalización de IPs (país/ISP/ciudad) para mostrar en el
+    panel Seguridad sin golpear ipinfo.io en cada request."""
+    ip = models.GenericIPAddressField(unique=True, db_index=True)
+    country = models.CharField(max_length=2, blank=True, default='')
+    country_name = models.CharField(max_length=100, blank=True, default='')
+    region = models.CharField(max_length=100, blank=True, default='')
+    city = models.CharField(max_length=100, blank=True, default='')
+    org = models.CharField(max_length=200, blank=True, default='')
+    hostname = models.CharField(max_length=200, blank=True, default='')
+    fetched_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-fetched_at']
+
+    def __str__(self):
+        return f"{self.ip} {self.country_name} ({self.org})"
