@@ -1,4 +1,5 @@
 from rest_framework import viewsets, status
+from django.db import models as dj_models
 from rest_framework.decorators import api_view, parser_classes
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser
@@ -82,28 +83,196 @@ class ScheduledPostViewSet(viewsets.ModelViewSet):
     serializer_class = ScheduledPostSerializer
 
 
+def _read_json_file(path, default=None):
+    """Leer un JSON del disco sin romper si falta o está corrupto."""
+    if default is None:
+        default = {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return default
+
+
+def _host_metrics():
+    """Métricas del host VPS (escritas por el recolector system_metrics.py)."""
+    # /root/.hermes está montado en el contenedor como /hermes (read-only)
+    return _read_json_file("/hermes/system_metrics.json", None)
+
+
+def _gateway_state():
+    """Estado del gateway de Hermes (running/draining, plataformas, agentes)."""
+    return _read_json_file("/hermes/gateway_state.json")
+
+
+def _model_tracking():
+    """Tracking de uso/errores por modelo (para rate limits reales)."""
+    return _read_json_file("/hermes/model_tracking_state.json")
+
+
+def _model_catalog():
+    """Catálogo de modelos activos (models.json del CRM)."""
+    data = _read_json_file("/hermes/crm/models.json", [])
+    if isinstance(data, dict):
+        return data.get("models", data.get("data", [])) or []
+    return data if isinstance(data, list) else []
+
+
+def _domains_summary(domains):
+    from collections import Counter
+    total = len(domains)
+    healthy = sum(1 for d in domains if d.get("healthy"))
+    unreachable = sum(1 for d in domains if not d.get("reachable"))
+    return {"total": total, "healthy": healthy, "unreachable": unreachable}
+
+
+def _business_stats():
+    """Estadísticas de negocio del CRM (DB)."""
+    delta_24h = timezone.now() - timezone.timedelta(hours=24)
+    try:
+        leads_totals = Lead.objects.count()
+        leads_by_status = dict(
+            Lead.objects.values("status").annotate(c=dj_models.Count("id"))
+            .order_by("-c")
+        )
+        new_leads_24h = Lead.objects.filter(created_at__gte=delta_24h).count()
+        conversations_active = Conversation.objects.filter(
+            updated_at__gte=delta_24h
+        ).count()
+        messages_24h = Message.objects.filter(created_at__gte=delta_24h).count()
+        posts_scheduled = Post.objects.filter(status="scheduled").count()
+        posts_next_7d = Post.objects.filter(
+            status="scheduled", scheduled_at__gte=timezone.now(),
+            scheduled_at__lte=timezone.now() + timezone.timedelta(days=7),
+        ).count()
+        agent_tasks_running = AgentTask.objects.filter(
+            status="running").count()
+        agent_tasks_completed = AgentTask.objects.filter(
+            status="completed").count()
+        return {
+            "leads_total": leads_totals,
+            "leads_by_status": leads_by_status,
+            "new_leads_24h": new_leads_24h,
+            "conversations_active": conversations_active,
+            "messages_24h": messages_24h,
+            "posts_scheduled": posts_scheduled,
+            "posts_next_7d": posts_next_7d,
+            "agent_tasks_running": agent_tasks_running,
+            "agent_tasks_completed": agent_tasks_completed,
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def _model_rate_limits():
+    """Rate limits y salud REALES por modelo (tracking + catálogo)."""
+    tracking = _model_tracking()
+    catalog = _model_catalog()
+    try:
+        catalog_ids = {m.get("id") for m in catalog if m.get("id")}
+    except AttributeError:
+        catalog_ids = set()
+
+    # catalog IDs suelen ser "provider/model" como en el tracking (key "provider::model")
+    def norm(k):
+        return k.replace("::", "/")
+
+    free_markers = ("free", ":free", "free")
+    out = []
+    for key, val in tracking.items():
+        mid = norm(key)
+        free = any(mk in mid.lower() for mk in ("free",))
+        out.append({
+            "model": mid,
+            "free": free,
+            "success_count": val.get("success_count", 0),
+            "failure_count": val.get("failure_count", 0),
+            "consecutive_failures": val.get("consecutive_failures", 0),
+            "last_used": val.get("last_used"),
+            "last_failure": val.get("last_failure"),
+        })
+    out.sort(key=lambda x: x["last_used"] or 0, reverse=True)
+    # si no hay tracking, al menos listar catálogo
+    if not out:
+        for m in catalog:
+            mid = m.get("id") or m.get("model") or ""
+            free = "free" in mid.lower()
+            out.append({
+                "model": mid, "free": free,
+                "success_count": 0, "failure_count": 0,
+                "consecutive_failures": 0, "last_used": None, "last_failure": None,
+            })
+    return out
+
+
 @api_view(['GET'])
 def dashboard_stats(request):
-    """Estadísticas para el dashboard"""
+    """Estadísticas para el dashboard — datos reales del host + Hermes + negocio."""
     import psutil
-    cpu = psutil.cpu_percent()
-    ram = psutil.virtual_memory().percent
-    
-    rate_limits = {
-        'OpenRouter': '45/min',
-        'Nous': '∞',
-        'NVIDIA': '0/min'
-    }
-    
-    agents = list(AgentTask.objects.values('id', 'name', 'status').order_by('-created_at')[:5])
-    scheduled = Post.objects.filter(status='scheduled').count()
-    
+
+    # 1) METRICAS DEL HOST (recolector externo, ver system_metrics.py)
+    host_metrics = _host_metrics()
+    # 2) ESTADO GATEWAY HERMES
+    gateway = _gateway_state()
+    # 3) TUNEL / DOMINIOS
+    domains = (host_metrics or {}).get("domains", []) or []
+    domains_summary = _domains_summary(domains)
+    # 4) NEGOCIO (DB)
+    business = _business_stats()
+    # 5) RATE LIMITS REALES (tracking + catálogo)
+    rate_limits = _model_rate_limits()
+
+    # fallback si el recolector no corrió aún: usar psutil del contenedor
+    if host_metrics is None:
+        try:
+            container_cpu = psutil.cpu_percent()
+        except Exception:
+            container_cpu = None
+        try:
+            container_ram = psutil.virtual_memory().percent
+        except Exception:
+            container_ram = None
+    else:
+        container_cpu = None
+        container_ram = None
+
+    # Alertas activas derivadas
+    alerts = []
+    hm = host_metrics or {}
+    h = hm.get("host") or {}
+    if h.get("disk", {}).get("percent") is not None and h["disk"]["percent"] >= 80:
+        alerts.append({"level": "warning", "type": "disk",
+                       "msg": f"Disco al {h['disk']['percent']}% (>80%)"})
+    load = h.get("load") or []
+    cores = h.get("cores") or 1
+    if load and load[0] > cores * 1.5:
+        alerts.append({"level": "warning", "type": "load",
+                       "msg": f"Load alto: {load[0]} ({cores} cores)"})
+    gw_state = gateway.get("gateway_state")
+    if gw_state and gw_state != "running":
+        alerts.append({"level": "warning", "type": "gateway",
+                       "msg": f"Gateway Hermes en estado {gw_state}"})
+    if domains_summary.get("unreachable", 0) > 0:
+        alerts.append({"level": "warning", "type": "tunnel",
+                       "msg": f"{domains_summary['unreachable']} dominio(s) inalcanzables"})
+
     return Response({
-        'cpu': cpu,
-        'ram': ram,
-        'rateLimits': rate_limits,
-        'agents': agents,
-        'scheduledPosts': scheduled
+        "ts": hm.get("ts") or timezone.now().isoformat(),
+        "host": h,
+        "containers": (hm or {}).get("containers") or [],
+        "domains": domains,
+        "domains_summary": domains_summary,
+        "gateway": {
+            "state": gw_state,
+            "platforms": list((gateway.get("platforms") or {}).keys()),
+            "active_agents": gateway.get("active_agents"),
+            "restart_requested": gateway.get("restart_requested"),
+        },
+        "rateLimits": rate_limits,
+        "business": business,
+        "alerts": alerts,
+        "container_probe": {"cpu": container_cpu, "ram": container_ram},
+        "source": "hermes-host",
     })
 
 

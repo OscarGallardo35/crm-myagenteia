@@ -38,7 +38,9 @@ const ChatView = () => {
   const [model, setModel] = useState('');
   const [loadingInit, setLoadingInit] = useState(true);
   const [loadingMsgs, setLoadingMsgs] = useState(false);
-  const [agentWorking, setAgentWorking] = useState(false);
+  // Conversaciones con turno del agente EN CURSO (permiten trabajar en otras libres)
+  const [workingConvs, setWorkingConvs] = useState({});
+  const isActiveWorking = !!(active && workingConvs[active.id]);
   const [input, setInput] = useState('');
   const [error, setError] = useState('');
 
@@ -69,7 +71,7 @@ const ChatView = () => {
 
   useEffect(() => { if (isMobile) setSidebarOpen(false); }, [isMobile]);
   useEffect(() => { scrollToBottom(); }, [messages, scrollToBottom]);
-  useEffect(() => { if (agentWorking) scrollToBottom(); }, [agentWorking, scrollToBottom]);
+  useEffect(() => { if (isActiveWorking) scrollToBottom(); }, [isActiveWorking, scrollToBottom]);
 
   // Atajo Ctrl+K (búsqueda) + Escape
   useEffect(() => {
@@ -221,7 +223,7 @@ const ChatView = () => {
     const currentAttachments = attachments;
     setAttachments([]);
     setMessages(prev => [...prev, { role: 'user', content: text }]);
-    setAgentWorking(true);
+    setWorkingConvs(prev => ({ ...prev, [active.id]: true }));
     setError('');
     try {
       let result;
@@ -246,35 +248,42 @@ const ChatView = () => {
           pollForAssistant(active.id, baseLen);
         } else if (result.message?.role === 'assistant') {
           setMessages(prev => [...prev, result.message]);
-          setAgentWorking(false);
+          setWorkingConvs(prev => { const p = {...prev}; delete p[active.id]; return p; });
         }
       } else if (result && !result.ok) {
         setError(result.error || 'Error al enviar');
-        setAgentWorking(false);
+        setWorkingConvs(prev => { const p = {...prev}; delete p[active.id]; return p; });
       }
-    } catch { setError('Error al enviar mensaje'); setAgentWorking(false); }
+    } catch {
+      setError('Error al enviar mensaje');
+      setWorkingConvs(prev => { const p = {...prev}; delete p[active.id]; return p; });
+    }
   }, [input, attachments, active, model, messages.length]);
 
   // ---- Polling: consulta la conversación hasta que Hermes termine ----
   const pollForAssistant = useCallback(async (cid, baseLen) => {
     const deadline = Date.now() + 15 * 60 * 1000; // máx 15 min
     let running = true;
+    // marcar SOLO esta conversación como en curso (las otras quedan libres)
+    setWorkingConvs(prev => ({ ...prev, [cid]: true }));
     const tick = async () => {
       if (!running) return;
-      if (Date.now() > deadline) { setError('El agente no respondió a tiempo.'); setAgentWorking(false); return; }
+      if (Date.now() > deadline) {
+        setError('El agente no respondió a tiempo.');
+        setWorkingConvs(prev => { const p = {...prev}; delete p[cid]; return p; });
+        return;
+      }
       try {
         const data = await api.getCrmConversation(cid);
         if (data && data.ok) {
           const msgs = data.messages || [];
           // esperar UNA respuesta nueva: que el nº de mensajes supere el baseLen
-          // (baseLen = mensajes existentes + el user enviado). Evita que un historial
-          // con respuestas previas apague la burbuja prematuramente.
           if (msgs.length > baseLen) {
             setMessages(msgs);
             setCrmConvos((prev) => prev.map(c => c.id === cid
               ? { ...c, preview: (msgs[msgs.length - 1]?.content || '').slice(0, 80), message_count: msgs.length }
               : c));
-            setAgentWorking(false);
+            setWorkingConvs(prev => { const p = {...prev}; delete p[cid]; return p; });
             return;
           }
         }
@@ -282,7 +291,6 @@ const ChatView = () => {
       setTimeout(tick, 4000);
     };
     setTimeout(tick, 4000);
-    setAgentWorking(true);
     // limpiar el loop si el componente se desmonta
     return () => { running = false; };
   }, []);
@@ -585,8 +593,8 @@ const ChatView = () => {
                   </div>
                 </div>
               ))}
-              {/* Burbuja del agente trabajando — dentro del flujo, después del último mensaje */}
-              {agentWorking && (
+              {/* Burbuja del agente trabajando — solo en la conversación CONSULTADA */}
+              {isActiveWorking && active && active.type === 'crm' && (
                 <div className="flex justify-start">
                   <div className="flex items-center gap-2.5 max-w-[85%] rounded-xl px-3.5 py-3 bg-gray-800/60 border border-cyan-500/20">
                     <span className="flex items-center gap-1">
@@ -630,7 +638,7 @@ const ChatView = () => {
               </div>
             )}
             <form className="flex gap-2 items-end" onSubmit={handleSend}>
-              <button type="button" onClick={() => fileInputRef.current?.click()} disabled={agentWorking || recording}
+              <button type="button" onClick={() => fileInputRef.current?.click()} disabled={isActiveWorking || recording}
                       className="p-2.5 bg-gray-800 border border-gray-700 rounded-lg text-gray-300 hover:text-cyan-400 hover:border-cyan-500/40 transition disabled:opacity-50" title="Adjuntar archivo">
                 📎
               </button>
@@ -643,19 +651,19 @@ const ChatView = () => {
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(e); } }}
                   onPaste={handlePaste}
-                  placeholder={agentWorking ? 'El agente está respondiendo…' : (activeIsCrm ? 'Escribí tu mensaje… (Enter para enviar, Shift+Enter nueva línea)' : 'Seleccioná una conversación para responder')}
-                  disabled={!activeIsCrm || agentWorking}
+                  placeholder={isActiveWorking ? 'El agente está respondiendo…' : (activeIsCrm ? 'Escribí tu mensaje… (Enter para enviar, Shift+Enter nueva línea)' : 'Seleccioná una conversación para responder')}
+                  disabled={!activeIsCrm || isActiveWorking}
                   rows={1}
                   className="w-full px-4 py-2.5 bg-gray-800 border border-gray-700 rounded-lg text-gray-100 focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:border-transparent disabled:opacity-50 resize-none overflow-y-auto"
                   style={{ minHeight: '42px', maxHeight: '120px' }}
                 />
               </div>
-              <button type="button" onClick={startRecording} disabled={agentWorking || recording}
+              <button type="button" onClick={startRecording} disabled={isActiveWorking || recording}
                       className={`p-2.5 border rounded-lg transition disabled:opacity-50 ${recording ? 'bg-red-500/20 border-red-500 text-red-400 animate-pulse' : 'bg-gray-800 border-gray-700 text-gray-300 hover:text-cyan-400 hover:border-cyan-500/40'}`}
                       title={recording ? 'Grabando…' : 'Grabar nota de voz'}>
                 🎤
               </button>
-              <button type="submit" disabled={!activeIsCrm || agentWorking || (!input.trim() && attachments.length === 0)}
+              <button type="submit" disabled={!activeIsCrm || isActiveWorking || (!input.trim() && attachments.length === 0)}
                       className="px-4 py-2.5 bg-gradient-to-r from-cyan-400 to-blue-500 text-white rounded-lg hover:from-cyan-300 hover:to-blue-400 transition font-medium disabled:opacity-50">Enviar</button>
             </form>
             <p className="text-[11px] text-gray-600 mt-2">{totalVisible} conversaciones · Hermes de fondo · <kbd className="text-gray-500">⌘K</kbd> buscar · Adjuntá documentos, imágenes o grabá audio</p>
