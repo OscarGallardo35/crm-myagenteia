@@ -68,15 +68,26 @@ function ArtifactCard({ artifact }) {
       const base = (title || '').replace(/\.[a-z0-9]+$/i, '') || 'artefacto';
       const safe = base.replace(/[^a-z0-9-_ ]/gi, '_').replace(/\s+/g, '_').slice(0, 60) || 'artefacto';
       const ext = extFor(type, lang);
-      const blob = new Blob([content], { type: mimeFor(type) + ';charset=utf-8' });
-      const url = URL.createObjectURL(blob);
+      const filename = `${safe}.${ext}`;
+      let blobUrl = null;
+      try {
+        const blob = new Blob([content], { type: mimeFor(type) + ';charset=utf-8' });
+        blobUrl = URL.createObjectURL(blob);
+      } catch (e) {
+        // fallback: data URI si el blob falla
+        blobUrl = 'data:' + mimeFor(type) + ';charset=utf-8,' + encodeURIComponent(content || '');
+      }
       const a = document.createElement('a');
-      a.href = url;
-      a.download = `${safe}.${ext}`;
+      a.href = blobUrl;
+      a.download = filename;
+      a.style.display = 'none';
+      // mantener el anchor en el DOM hasta que la descarga arranque
       document.body.appendChild(a);
       a.click();
-      document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setTimeout(() => {
+        document.body.removeChild(a);
+        if (blobUrl && blobUrl.startsWith('blob:')) URL.revokeObjectURL(blobUrl);
+      }, 1500);
     } catch (e) { /* ignore */ }
   };
 
