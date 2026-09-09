@@ -27,8 +27,6 @@ class AgentTask(models.Model):
     input_data = models.JSONField(default=dict, blank=True)
     # Output/result of the task
     output_data = models.JSONField(default=dict, blank=True, null=True)
-    # Logs or error messages
-    logs = models.TextField(blank=True, null=True)
     started_at = models.DateTimeField(blank=True, null=True)
     completed_at = models.DateTimeField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)

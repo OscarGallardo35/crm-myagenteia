@@ -5,7 +5,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = 'django-insecure-_(-*z!q&@#+_))))zv6ju*zeq^3o$&#!0qd!z(*%v)#(_)6))$'
 DEBUG = True
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['crm.mercadodigital.pro', 'coolify.mercadodigital.pro', 'studio.mercadodigital.pro', 'voice.mercadodigital.pro', 'enjambre.mercadodigital.pro', 'veterinaria.mercadodigital.pro', 'myagenteia.mercadodigital.pro', 'trama.mercadodigital.pro', 'servicell.mercadodigital.pro', 'localhost', '127.0.0.1', 'backend']
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -14,13 +14,14 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'rest_framework',
+    
     'corsheaders',
     'chat',
     'dashboard',
     'leads',
     'posting',
-'agents',
+    'agents',
+    'auth_backend',
 ]
 
 MIDDLEWARE = [
@@ -91,10 +92,10 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework.authentication.TokenAuthentication',
+        'rest_framework.authentication.SessionAuthentication',
     ],
     'DEFAULT_PERMISSION_CLASSES': [
-        'rest_framework.permissions.IsAuthenticated',
+        'rest_framework.permissions.AllowAny',
     ],
 }
 

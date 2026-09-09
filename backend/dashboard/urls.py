@@ -1,6 +1,7 @@
 from django.urls import path
-from . import views
+from chat.views import dashboard_stats as ds_stats, agents_status as ag_stats
 
 urlpatterns = [
-    # TODO: add endpoints for dashboard
+    path('', ds_stats, name='dashboard-stats'),
+    path('stats/', ds_stats, name='dashboard-stats-alt'),
 ]

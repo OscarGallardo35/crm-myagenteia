@@ -2,5 +2,5 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
-    # TODO: add endpoints for leads
+    path('', views.get_leads, name='leads-list'),
 ]

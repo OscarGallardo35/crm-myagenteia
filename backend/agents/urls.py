@@ -2,5 +2,5 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
-    # TODO: add endpoints for agents
+    path('', views.get_agents_status, name='agents-status'),
 ]

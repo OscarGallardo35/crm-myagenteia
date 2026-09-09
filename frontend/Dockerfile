@@ -9,4 +9,3 @@ COPY . .
 RUN npm run build
 
 # Los estáticos quedan en /app/dist
-# El nginx los sirve desde allí

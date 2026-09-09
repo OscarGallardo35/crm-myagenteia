@@ -27,7 +27,7 @@ class Lead(models.Model):
     company = models.CharField(max_length=200, blank=True, null=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='new')
     source = models.CharField(max_length=20, choices=SOURCE_CHOICES, default='web')
-    value = models.DecimalField(max_length=10, decimal_places=2, blank=True, null=True)
+    value = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     assigned_to = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='leads_assigned')
     created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='leads_created')
     notes = models.TextField(blank=True, null=True)
@@ -48,7 +48,7 @@ class Deal(models.Model):
     ]
     lead = models.OneToOneField(Lead, on_delete=models.CASCADE, related_name='deal')
     title = models.CharField(max_length=200)
-    value = models.DecimalField(max_length=10, decimal_places=2)
+    value = models.DecimalField(max_digits=10, decimal_places=2)
     stage = models.CharField(max_length=20, choices=STAGE_CHOICES, default='prospecting')
     expected_close_date = models.DateField()
     assigned_to = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='deals_assigned')
