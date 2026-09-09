@@ -30,6 +30,9 @@ class Message(models.Model):
     # role: user, assistant, system
     role = models.CharField(max_length=20)
     content = models.TextField()
+    # Artefactos tipo Claude: lista de {type, title, lang, content} extraídos
+    # de los bloques ```artifact:<type> ... ``` de la respuesta del assistant.
+    artifacts = models.JSONField(default=list, blank=True, null=True)
     # Optional: store the model used for this message if it changed mid-conversation
     model_config = models.ForeignKey(ModelConfig, on_delete=models.SET_NULL, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

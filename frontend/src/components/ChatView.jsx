@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import ModelSelector from './ModelSelector';
 import MarkdownRenderer from './MarkdownRenderer';
+import ArtifactCard from './ArtifactCard';
 import { api } from '../lib/api';
 
 // Chat tipo Claude con Hermes de fondo.
@@ -479,6 +480,12 @@ const ChatView = () => {
                         <span className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1">{msg.role}</span>
                       )}
                       {msg.role === 'assistant' ? <MarkdownRenderer content={msg.content} /> : msg.content}
+                      {/* Artefactos tipo Claude */}
+                      {msg.role === 'assistant' && Array.isArray(msg.artifacts) && msg.artifacts.length > 0 && (
+                        <div className="mt-2 space-y-2">
+                          {msg.artifacts.map((a, j) => <ArtifactCard key={j} artifact={a} />)}
+                        </div>
+                      )}
                     </div>
                   </div>
                   {/* Acciones: copiar */}

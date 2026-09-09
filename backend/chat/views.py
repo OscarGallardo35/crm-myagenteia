@@ -285,6 +285,66 @@ def crm_conversation_message(request, pk):
     return Response(response_data, status=201)
 
 
+def _extract_artifacts(content):
+    """Separa bloques ```artifact:<type> ... ``` del texto y los devuelve como
+    lista de artefactos tipo Claude. Acepta content str o dict {content: str}.
+    Retorna (texto_limpio, [artefactos]).
+    Tipos soportados: code, mermaid, markdown, txt. Extra: lang/title."""
+    import re
+    if isinstance(content, dict):
+        content = content.get('content') or content.get('message', '') or ''
+    if not isinstance(content, str) or not content:
+        return (content, [])
+    pattern = re.compile(
+        r'```\s*artifact:([a-zA-Z0-9_+-]+)\s*([^\n]*)\n(.*?)```',
+        re.DOTALL | re.IGNORECASE,
+    )
+    artifacts = []
+    out_text = content
+    for m in pattern.finditer(content):
+        atype = m.group(1).strip().lower()
+        meta = m.group(2).strip() if m.group(2) else ''
+        body = m.group(3)
+        if atype not in ('code', 'mermaid', 'markdown', 'md', 'txt', 'text', 'html', 'svg'):
+            # no es artefacto conocido -> dejar el bloque como texto
+            continue
+        title = ''
+        lang = None
+        # parsear lang="xx" y title="yy" opcionales
+        import shlex
+        try:
+            parts = shlex.split(meta)
+        except Exception:
+            parts = meta.split()
+        for p in parts:
+            if '=' in p:
+                k, v = p.split('=', 1)
+                v = v.strip('"\'')
+                if k == 'lang':
+                    lang = v
+                elif k == 'title':
+                    title = v
+        if atype == 'md':
+            atype = 'markdown'
+        elif atype == 'text':
+            atype = 'txt'
+        if not title:
+            title = {'code': 'Código', 'mermaid': 'Diagrama', 'markdown': 'Markdown',
+                     'txt': 'Texto', 'html': 'HTML', 'svg': 'SVG'}.get(atype, 'Artefacto')
+        artifacts.append({
+            'type': atype,
+            'title': title,
+            'lang': lang,
+            'content': body,
+        })
+        # quitar el bloque del texto visible
+        out_text = out_text.replace(m.group(0), '', 1)
+    # limpiar espacios residuales del texto
+    if artifacts:
+        out_text = re.sub(r'\n{3,}', '\n\n', out_text).strip()
+    return (out_text, artifacts)
+
+
 def _run_agent_background(user_id, conversation_pk, user_content, requested_model):
     """Ejecuta el turno del agente Hermes en un hilo. Guarda la respuesta del
     assistant en la conversación cuando termina."""
@@ -295,7 +355,10 @@ def _run_agent_background(user_id, conversation_pk, user_content, requested_mode
     try:
         c = Conversation.objects.filter(pk=conversation_pk).first()
         if c and asst:
-            Message.objects.create(conversation=c, role='assistant', content=asst)
+            clean_text, artifacts = _extract_artifacts(asst)
+            Message.objects.create(
+                conversation=c, role='assistant', content=clean_text,
+                artifacts=artifacts or None)
             c.save()
     except Exception:
         pass
