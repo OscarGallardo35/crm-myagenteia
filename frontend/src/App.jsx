@@ -23,6 +23,13 @@ function AppShell() {
   const [openSession, setOpenSession] = useState(null);
   const { user, loading, isAuthenticated } = useAuth();
 
+  // Abrir una sesión persistente en el chat (desde el panel Agentes)
+  // NOTA: usar useCallback ANTES de los returns condicionales (Rules of Hooks).
+  const handleOpenSession = useCallback((sessionId, title) => {
+    setOpenSession({ id: sessionId, title });
+    setActiveView('chat');
+  }, []);
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-900 flex items-center justify-center">
@@ -37,12 +44,6 @@ function AppShell() {
 
   const viewInfo = VIEWS[activeView] || VIEWS.chat;
   const ViewComponent = viewInfo.Component;
-
-  // Abrir una sesión persistente en el chat (desde el panel Agentes)
-  const handleOpenSession = useCallback((sessionId, title) => {
-    setOpenSession({ id: sessionId, title });
-    setActiveView('chat');
-  }, []);
 
   return (
     <div className="flex h-screen bg-gray-900 text-gray-100 overflow-hidden">
