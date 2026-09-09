@@ -391,6 +391,18 @@ def _run_agent_background(user_id, conversation_pk, user_content, requested_mode
         c = Conversation.objects.filter(pk=conversation_pk).first()
         if c and asst:
             clean_text, artifacts = _extract_artifacts(asst)
+            artifacts = artifacts or []
+            # Si el agente generó una carpeta de proyecto, agregar artefacto zip
+            if _has_project_files(c.id):
+                if not any(a.get('type') == 'zip' for a in artifacts):
+                    artifacts.append({
+                        'type': 'zip',
+                        'title': 'Proyecto.zip',
+                        'lang': None,
+                        'content': '',
+                        'url': f'/api/chat/hermes/project_zip/{c.id}/',
+                        'file_count': _project_file_count(c.id),
+                    })
             Message.objects.create(
                 conversation=c, role='assistant', content=clean_text,
                 artifacts=artifacts or None)
@@ -440,7 +452,7 @@ def _ask_hermes(user_id, conversation_pk, user_content, requested_model=None):
         import urllib.error
         data = {
             "message": user_content,  # el endpoint espera string, no dict {role,content}
-            "system_message": _CRM_SYSTEM_PROMPT,
+            "system_message": _crm_system_prompt(conversation_pk),
         }
         body = json.dumps(data).encode()
         req = urllib.request.Request(
@@ -460,7 +472,7 @@ def _ask_hermes(user_id, conversation_pk, user_content, requested_model=None):
                     data = {
                         "model": model,
                         "message": user_content,
-                        "system_message": _CRM_SYSTEM_PROMPT,
+                        "system_message": _crm_system_prompt(conversation_pk),
                     }
                     body = json.dumps(data).encode()
                     req = urllib.request.Request(
@@ -480,25 +492,72 @@ def _ask_hermes(user_id, conversation_pk, user_content, requested_model=None):
         return _ask_proxy_nous(user_id, conversation_pk, user_content, requested_model)
 
 
-_CRM_SYSTEM_PROMPT = (
-    "Sos el asistente de IA del CRM MyAgenteIA. Respondé con claridad y en el "
-    "idioma que se te habla. Si el usuario pide acciones técnicas podes razonar y "
-    "proponer, pero sin ejecutar comandos destructivos sin confirmación.\n\n"
-    "FORMA DE ENTREGAR ARCHIVOS O ARTEFACTOS (IMPORTANTE):\n"
-    "Cuando el usuario pida algo que sea código, un diagrama, documentación markdown "
-    "o un archivo de texto, NO lo pongas suelto en el texto: separarlo en un BLOQUE "
-    "fenced con el prefijo artifact:<tipo>. El sistema lo detecta y lo muestra como "
-    "una tarjeta descargable/copiable al lado del chat. Formatos exactos:\n"
-    "  Código: ```artifact:code lang=\"python\" title=\"mi_script.py\"\\n<el codigo>```\n"
-    "  Diagrama: ```artifact:mermaid\\n<diagrama mermaid valido>```\n"
-    "  Documento markdown: ```artifact:markdown title=\"notas.md\"\\n<contenido .md>```\n"
-    "  Texto plano: ```artifact:txt\\n<contenido>```\n"
-    "Siempre cerrar el código sin artefactos en el texto visible, solo breve "
-    "explicación.\n\n"
-    "Al crear un artefacto de código: encerrar entre ```artifact:code ... ``` el código "
-    "completo (funcionando y sin truncar), y SIEMPRE pedirle al usuario si quiere que se "
-    "lo adapte o explique."
-)
+def _crm_system_prompt(conversation_pk):
+    """System prompt dinámico del chat CRM. Incluye la carpeta de salida para
+    varios archivos (que el backend zipea y entrega como .zip)."""
+    import os
+    out_dir = _crm_output_dir(conversation_pk)  # ej. /root/.hermes/crm_output/17
+    return (
+        "Sos el asistente de IA del CRM MyAgenteIA. Respondé con claridad y en el "
+        "idioma que se te habla. Si el usuario pide acciones técnicas podes razonar y "
+        "proponer, pero sin ejecutar comandos destructivos sin confirmación.\n\n"
+        "FORMA DE ENTREGAR ARCHIVOS O ARTEFACTOS (IMPORTANTE):\n"
+        "Cuando el usuario pida algo que sea código, un diagrama, documentación markdown "
+        "o un archivo de texto, NO lo pongas suelto en el texto: separarlo en un BLOQUE "
+        "fenced con el prefijo artifact:<tipo>. El sistema lo detecta y lo muestra como "
+        "una tarjeta descargable/copiable al lado del chat. Formatos exactos:\n"
+        "  Código: ```artifact:code lang=\"python\" title=\"mi_script.py\"\\n<el codigo>```\n"
+        "  Diagrama: ```artifact:mermaid\\n<diagrama mermaid valido>```\n"
+        "  Documento markdown: ```artifact:markdown title=\"notas.md\"\\n<contenido .md>```\n"
+        "  Texto plano: ```artifact:txt\\n<contenido>```\n"
+        "Siempre cerrar el código sin artefactos en el texto visible, solo breve "
+        "explicación.\n\n"
+        "PROYECTOS MULTI-ARCHIVO (CARPETA + ZIP):\n"
+        "Si el usuario pide VARIOS archivos o un proyecto completo (una app, un sitio, "
+        "módulos, scripts+docs): NO los pongas sueltos en el texto. Creales la carpeta "
+        f"{out_dir} (mkdir -p) y guardá TODOS los archivos ahí. Después respondé en texto "
+        "breve describiendo qué guardaste y decile al usuario que puede descargar todo "
+        "como .zip. El sistema zipeará esa carpeta automáticamente al final del turno.\n\n"
+        "Al crear un artefacto de código: encerrar entre ```artifact:code ... ``` el código "
+        "completo (funcionando y sin truncar), y SIEMPRE pedirle al usuario si quiere que se "
+        "lo adapte o explique."
+    )
+
+
+def _crm_output_dir(conversation_pk):
+    """Carpeta de salida multi-archivo de una conversación.
+
+    El agente Hermes (corre en el host, root) escribe en /root/.hermes/crm_output/<pk>.
+    El backend lo ve montado como /hermes/crm_output/<pk> (volumen read-only). Para
+    listar/comprimir usamos el path de lectura; el agente usa el path host real.
+    """
+    return os.path.join(os.environ.get('CRM_OUTPUT_DIR', '/root/.hermes/crm_output'), str(conversation_pk))
+
+
+def _crm_output_dir_read(conversation_pk):
+    """Path de lectura (dentro del contenedor backend) de la carpeta de salida."""
+    reads = os.environ.get('CRM_OUTPUT_DIR_READ', '/hermes/crm_output')
+    return os.path.join(reads, str(conversation_pk))
+
+
+def _has_project_files(conversation_pk):
+    """¿La conversación generó la carpeta de proyecto con al menos un archivo?"""
+    try:
+        d = _crm_output_dir_read(conversation_pk)
+        if not os.path.isdir(d):
+            return False
+        files = [f for f in os.listdir(d) if os.path.isfile(os.path.join(d, f))]
+        return len(files) > 0
+    except Exception:
+        return False
+
+
+def _project_file_count(conversation_pk):
+    try:
+        d = _crm_output_dir_read(conversation_pk)
+        return len([f for f in os.listdir(d) if os.path.isfile(os.path.join(d, f))]) if os.path.isdir(d) else 0
+    except Exception:
+        return 0
 
 
 def _get_agent_session_id(user, convo, model):

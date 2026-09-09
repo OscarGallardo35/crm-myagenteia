@@ -260,3 +260,41 @@ def hermes_models(request):
     if models is None:
         return Response({"ok": False, "models": []})
     return Response({"ok": True, "models": models})
+
+
+@api_view(["GET"])
+def project_zip(request, conversation_pk):
+    """Sirve la carpeta de proyecto de una conversación como .zip (en memoria).
+
+    El agente guardó los archivos en /root/.hermes/crm_output/<pk> (host); acá los
+    leemos vía el volumen montado y los comprimimos. Requiere autenticación.
+    """
+    from django.http import FileResponse
+    from rest_framework.permissions import IsAuthenticated
+    import io
+    import zipfile
+
+    # verificar que la conversación pertenezca al usuario
+    from .models import Conversation
+    try:
+        convo = Conversation.objects.get(pk=conversation_pk, user=request.user)
+    except Exception:
+        return Response({"ok": False, "error": "No autorizado"}, status=404)
+
+    read_dir = os.environ.get("CRM_OUTPUT_DIR_READ", "/hermes/crm_output")
+    d = os.path.join(read_dir, str(conversation_pk))
+    if not os.path.isdir(d):
+        return Response({"ok": False, "error": "Sin archivos de proyecto"}, status=404)
+
+    files = [f for f in os.listdir(d) if os.path.isfile(os.path.join(d, f))]
+    if not files:
+        return Response({"ok": False, "error": "Sin archivos de proyecto"}, status=404)
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for f in sorted(files):
+            zf.write(os.path.join(d, f), arcname=f)
+    buf.seek(0)
+    response = FileResponse(buf, as_attachment=True, filename=f"proyecto_{conversation_pk}.zip")
+    response["Content-Type"] = "application/zip"
+    return response

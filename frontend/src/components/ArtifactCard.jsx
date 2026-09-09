@@ -7,7 +7,7 @@ function ArtifactCard({ artifact }) {
   const [mermaidErr, setMermaidErr] = useState(null);
   const [mermaidLoading, setMermaidLoading] = useState(false);
   const mermaidRef = useRef(null);
-  const { type, title, content, lang } = artifact;
+  const { type, title, content, lang, url, file_count } = artifact;
 
   // Renderizar Mermaid on-demand
   useEffect(() => {
@@ -51,6 +51,7 @@ function ArtifactCard({ artifact }) {
   // Deriva nombre de archivo + extensión según el tipo
   const LANG_EXT = { python: 'py', javascript: 'js', typescript: 'ts', java: 'java', c: 'c', cpp: 'cpp', 'c++': 'cpp', go: 'go', rust: 'rs', ruby: 'rb', php: 'php', bash: 'sh', shell: 'sh', sh: 'sh', sql: 'sql', json: 'json', yaml: 'yaml', yml: 'yml', xml: 'xml', css: 'css', html: 'html', jsx: 'jsx', tsx: 'tsx', markdown: 'md', md: 'md' };
   const extFor = (t, l) => {
+    if (t === 'zip') return 'zip';
     if (t === 'code' && l) return LANG_EXT[l.toLowerCase()] || l.replace(/[^a-z0-9]/gi, '') || 'txt';
     const map = {
       code: 'txt', mermaid: 'mmd', markdown: 'md', md: 'md',
@@ -59,24 +60,38 @@ function ArtifactCard({ artifact }) {
     return map[t] || 'txt';
   };
   const mimeFor = (t) => {
+    if (t === 'zip') return 'application/zip';
     const map = { svg: 'image/svg+xml', html: 'text/html', markdown: 'text/markdown', md: 'text/markdown', mermaid: 'text/plain', code: 'text/plain', txt: 'text/plain' };
     return map[t] || 'text/plain';
   };
 
-  const download = () => {
+  const download = async () => {
     try {
       const base = (title || '').replace(/\.[a-z0-9]+$/i, '') || 'artefacto';
       const safe = base.replace(/[^a-z0-9-_ ]/gi, '_').replace(/\s+/g, '_').slice(0, 60) || 'artefacto';
       const ext = extFor(type, lang);
       const filename = `${safe}.${ext}`;
       let blobUrl = null;
-      try {
-        const blob = new Blob([content], { type: mimeFor(type) + ';charset=utf-8' });
+
+      if (url) {
+        // descarga desde servidor (zip): fetch con token de auth
+        const token = (typeof window !== 'undefined') ? localStorage.getItem('auth_token') : null;
+        const res = await fetch(url, {
+          headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+        });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const blob = await res.blob();
         blobUrl = URL.createObjectURL(blob);
-      } catch (e) {
-        // fallback: data URI si el blob falla
-        blobUrl = 'data:' + mimeFor(type) + ';charset=utf-8,' + encodeURIComponent(content || '');
+      } else {
+        try {
+          const blob = new Blob([content], { type: mimeFor(type) + ';charset=utf-8' });
+          blobUrl = URL.createObjectURL(blob);
+        } catch (e) {
+          // fallback: data URI si el blob falla
+          blobUrl = 'data:' + mimeFor(type) + ';charset=utf-8,' + encodeURIComponent(content || '');
+        }
       }
+
       const a = document.createElement('a');
       a.href = blobUrl;
       a.download = filename;
@@ -96,20 +111,24 @@ function ArtifactCard({ artifact }) {
   const header = (
     <div className="flex items-center justify-between px-3 py-1.5 bg-gray-800 border-b border-gray-700 rounded-t-lg">
       <span className="text-[11px] font-medium text-gray-400 truncate">
-        {title}{lang ? ` · ${lang}` : ''}
+        {type === 'zip'
+          ? `${title}${file_count ? ` · ${file_count} archivos` : ''}`
+          : `${title}${lang ? ` · ${lang}` : ''}`}
       </span>
       <div className="flex items-center gap-0.5 shrink-0">
-        <button onClick={download} className={btnBase} title="Descargar archivo">
+        <button onClick={download} className={btnBase} title={url ? 'Descargar proyecto como .zip' : 'Descargar archivo'}>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
             <polyline points="7 10 12 15 17 10" />
             <line x1="12" y1="15" x2="12" y2="3" />
           </svg>
-          Descargar
+          {type === 'zip' ? 'Descargar .zip' : 'Descargar'}
         </button>
-        <button onClick={copy} className={btnBase} title="Copiar contenido">
-          {copied ? '✓ Copiado' : '⧉ Copiar'}
-        </button>
+        {type !== 'zip' && (
+          <button onClick={copy} className={btnBase} title="Copiar contenido">
+            {copied ? '✓ Copiado' : '⧉ Copiar'}
+          </button>
+        )}
       </div>
     </div>
   );
@@ -138,6 +157,13 @@ function ArtifactCard({ artifact }) {
       ) : type === 'markdown' ? (
         <div className="p-3 text-xs text-gray-300 whitespace-pre-wrap font-sans" style={{ wordBreak: 'break-word' }}>
           {content}
+        </div>
+      ) : type === 'zip' ? (
+        <div className="p-4 flex items-center justify-center gap-3 text-sm text-gray-400">
+          <span className="text-2xl">📦</span>
+          <span>
+            Proyecto con {file_count || 'varios'} archivos. Descargalo como .zip para tenerlo todo junto.
+          </span>
         </div>
       ) : (
         <pre className="p-3 text-[11.5px] leading-relaxed text-gray-200 font-mono whitespace-pre overflow-auto" style={{ maxHeight: 380 }}>{content}</pre>

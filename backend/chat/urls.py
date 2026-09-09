@@ -20,4 +20,5 @@ urlpatterns = [
     path('hermes/sessions/', hermes.hermes_sessions),
     path('hermes/sessions/<str:session_id>/', hermes.hermes_session_messages),
     path('hermes/models/', hermes.hermes_models),
+    path('hermes/project_zip/<int:conversation_pk>/', hermes.project_zip),
 ]
