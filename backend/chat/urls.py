@@ -15,6 +15,7 @@ urlpatterns = [
     path('conversations/', views.crm_conversations),
     path('conversations/<int:pk>/', views.crm_conversation_detail),
     path('conversations/<int:pk>/message/', views.crm_conversation_message),
+    path('conversations/<int:pk>/model/', views.crm_conversation_model),
     # Hermes bridge
     path('hermes/sessions/', hermes.hermes_sessions),
     path('hermes/sessions/<str:session_id>/', hermes.hermes_session_messages),

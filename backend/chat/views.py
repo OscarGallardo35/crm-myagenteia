@@ -249,6 +249,39 @@ def crm_conversation_detail(request, pk):
 
 
 @api_view(['POST'])
+def crm_conversation_model(request, pk):
+    """Cambia el modelo de la sesión de agente de esta conversación al instante
+    (session model lock) — la misma conversación sigue con el modelo nuevo desde
+    el próximo mensaje, sin crear sesión nueva ni perder el historial."""
+    try:
+        c = Conversation.objects.get(pk=pk, user=request.user)
+    except Conversation.DoesNotExist:
+        return Response({'ok': False, 'error': 'Conversación no encontrada'}, status=404)
+    new_model = (request.data.get('model') or '').strip()
+    if not new_model or new_model == 'hermes-agent':
+        new_model = 'deepseek/deepseek-v4-flash'
+    stored = (c.memory or '')
+    if not stored.startswith('hermes_session:'):
+        # no hay sesión aún -> solo registrar el modelo para cuando se cree
+        from .models import ModelConfig
+        cfg, _ = ModelConfig.objects.get_or_create(name=new_model, defaults={
+            'provider': 'commandcode', 'model_id': new_model})
+        c.model_config = cfg
+        c.save()
+        return Response({'ok': True, 'model': new_model, 'locked': False,
+                         'msg': 'Modelo guardado para la próxima sesión'})
+    session_id = stored.split(':', 1)[1].strip()
+    ok = _lock_agent_session_model(request.user, session_id, new_model)
+    from .models import ModelConfig
+    cfg, _ = ModelConfig.objects.get_or_create(name=new_model, defaults={
+        'provider': 'commandcode', 'model_id': new_model})
+    c.model_config = cfg
+    c.save()
+    return Response({'ok': True, 'model': new_model, 'locked': ok,
+                     'msg': 'Modelo cambiado en la sesión' if ok else 'el lock no se pudo aplicar (el próximo mensaje igual lo usará)'})
+
+
+@api_view(['POST'])
 def crm_conversation_message(request, pk):
     """Agrega un mensaje a una conversación del CRM. Si es del usuario, consulta el
     proxy Hermes y guarda la respuesta del asistente (chat bidireccional)."""
@@ -491,11 +524,17 @@ def _lock_agent_session_model(user, session_id, model):
     key = _read_gateway_key()
     if not key or not GATEWAY_LOCK_URL:
         return False
-    lock_model = model if model and model != 'hermes-agent' else 'meituan/longcat-2.0:free'
-    # derivar provider desde el id (nous, openrouter, etc)
-    provider = (lock_model.split("/")[0] if "/" in lock_model else "").split(":")[0]
-    if not provider or provider in ("meituan", "poolside", "inclusionai", "stepfun"):
-        provider = "nous"
+    lock_model = model if model and model != 'hermes-agent' else 'deepseek/deepseek-v4-flash'
+    # derivar provider desde el id (commandcode, nous, openrouter, etc)
+    def _derive_provider(m):
+        # modelos de Command Code: deepseek/, gpt-, google/, Qwen/, z-ai/, zai-org/, MiniMaxAI/, claude-...
+        cc_prefixes = ('deepseek/', 'gpt-', 'google/', 'Qwen/', 'z-ai/', 'zai-org/', 'MiniMaxAI/', 'moonshotai/', 'claude-', 'stepfun/', 'tencent/', 'xiaomi/', 'sakana/', 'nvidia/', 'thinkingmachines/', 'poolside/', 'meta/', 'xai/', 'meituan/')
+        if m.startswith(cc_prefixes):
+            return 'commandcode'
+        if '/' in m:
+            return m.split("/")[0]
+        return 'commandcode'
+    provider = _derive_provider(lock_model)
     body = json.dumps({
         "model": lock_model,
         "provider": provider,

@@ -137,6 +137,17 @@ const ChatView = () => {
     } catch { setError('Error al crear conversación'); }
   }, [isMobile]);
 
+  // ---- Cambiar modelo (aplica el session model lock al instante) ----
+  const handleModelChange = useCallback(async (newModel) => {
+    setModel(newModel);
+    // si hay una conversación CRM activa, cambia el modelo de su sesión de agente
+    if (active && active.type === 'crm') {
+      try {
+        await api.setCrmConversationModel(active.id, newModel);
+      } catch { /* no crítico, el próximo envío usa el modelo igualmente */ }
+    }
+  }, [active]);
+
   // ---- Enviar mensaje (background job + polling: el agente corre en un hilo) ----
   const handleSend = useCallback(async (e) => {
     e.preventDefault();
@@ -291,7 +302,7 @@ const ChatView = () => {
             <span className="hidden sm:inline">Buscar…</span>
             <kbd className="hidden sm:inline text-[10px] bg-gray-700 px-1.5 py-0.5 rounded text-gray-400">⌘K</kbd>
           </button>
-          <ModelSelector value={model} onModelChange={setModel} />
+          <ModelSelector value={model} onModelChange={handleModelChange} />
         </div>
       </div>
 
