@@ -305,7 +305,8 @@ def _extract_artifacts(content):
         atype = m.group(1).strip().lower()
         meta = m.group(2).strip() if m.group(2) else ''
         body = m.group(3)
-        if atype not in ('code', 'mermaid', 'markdown', 'md', 'txt', 'text', 'html', 'svg'):
+        if atype not in ('code', 'mermaid', 'markdown', 'md', 'txt', 'text', 'html', 'svg',
+                         'file', 'plain', 'plaintext'):
             # no es artefacto conocido -> dejar el bloque como texto
             continue
         title = ''
@@ -326,7 +327,7 @@ def _extract_artifacts(content):
                     title = v
         if atype == 'md':
             atype = 'markdown'
-        elif atype == 'text':
+        elif atype in ('text', 'file', 'plain', 'plaintext'):
             atype = 'txt'
         if not title:
             title = {'code': 'Código', 'mermaid': 'Diagrama', 'markdown': 'Markdown',

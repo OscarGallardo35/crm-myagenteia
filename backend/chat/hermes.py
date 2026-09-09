@@ -51,8 +51,39 @@ def _gateway_key():
 
 
 def _read_models():
-    """Prioriza el catálogo real del api_server del gateway (/api/model/options);
-    cae al archivo local si el gateway no está disponible."""
+    """Prioriza el catálogo local curado (models.json del CRM: solo los modelos que
+    Oscar quiere en el selector, incluidos los de Command Code). Usa el catálogo del
+    gateway SOLO si el local no existe/no es legible — el catálogo del gateway entero
+    mezcla 25 modelos de pago de Fireworks y Copilot que no deberían aparecer."""
+    local = _read_local_models()
+    if local:
+        return local
+    return _read_gateway_models()
+
+
+def _read_local_models():
+    """Lee models.json del CRM (curado a mano)."""
+    if os.path.exists(MODELS_JSON):
+        try:
+            with open(MODELS_JSON) as f:
+                data = json.load(f)
+            models = []
+            for m in data if isinstance(data, list) else data.get("models", []):
+                mid = m.get("id", "") if isinstance(m, dict) else str(m)
+                if not mid:
+                    continue
+                parts = mid.split("/")
+                provider = m.get("provider") if isinstance(m, dict) else (parts[0] if len(parts) > 1 else "hermes")
+                label = m.get("label") if isinstance(m, dict) else mid.split("/")[-1]
+                models.append({"id": mid, "label": label or mid.split("/")[-1], "provider": provider})
+            return models[:60] or None
+        except Exception:
+            return None
+    return None
+
+
+def _read_gateway_models():
+    """Catálogo del api_server del gateway como respaldo (si no hay local)."""
     if GATEWAY_URL:
         try:
             key = _gateway_key()
@@ -78,24 +109,6 @@ def _read_models():
                 return models[:60]
         except Exception:
             pass
-
-    # Fallback local
-    if os.path.exists(MODELS_JSON):
-        try:
-            with open(MODELS_JSON) as f:
-                data = json.load(f)
-            models = []
-            for m in data if isinstance(data, list) else data.get("models", []):
-                mid = m.get("id", "") if isinstance(m, dict) else str(m)
-                if not mid:
-                    continue
-                parts = mid.split("/")
-                provider = parts[0] if len(parts) > 1 else "hermes"
-                label = m.get("label") if isinstance(m, dict) else mid.split("/")[-1]
-                models.append({"id": mid, "label": label or mid.split("/")[-1], "provider": provider})
-            return models[:60] or None
-        except Exception:
-            return None
     return None
 
 
