@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 
-const Login = ({ onLoginSuccess }) => {
+const Login = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -16,9 +16,9 @@ const Login = ({ onLoginSuccess }) => {
     const result = await login(email, password);
     setLoading(false);
 
-    if (result.success) {
-      onLoginSuccess();
-    } else {
+    // El éxito se refleja automáticamente: login() setea el user en AuthContext,
+    // isAuthenticated pasa a true y AppShell re-renderiza fuera del Login.
+    if (!result.success) {
       setError(result.error || 'Credenciales inválidas');
     }
   };
