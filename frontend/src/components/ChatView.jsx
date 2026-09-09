@@ -147,7 +147,7 @@ const ChatView = () => {
     setAgentWorking(true);
     setError('');
     try {
-      const chosenModel = model || 'meituan/longcat-2.0:free';
+      const chosenModel = model || '';  // si vacío, el backend usa su default (deepseek v4 flash via commandcode)
       const data = await api.addCrmMessage(active.id, 'user', text, chosenModel);
       if (data && data.ok) {
         // actualizar mensaje user y preview
