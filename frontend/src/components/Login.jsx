@@ -75,11 +75,6 @@ const Login = () => {
           </button>
         </form>
 
-        <div className="mt-4 text-center">
-          <p className="text-xs text-gray-500">
-            Solo usuario autorizado: cagriostroxd@gmail.com
-          </p>
-        </div>
       </div>
     </div>
   );
