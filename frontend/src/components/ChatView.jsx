@@ -492,7 +492,7 @@ const ChatView = () => {
                   <div className={`flex mt-0.5 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                     <button
                       onClick={() => copyMessage(msg.content, i)}
-                      className="opacity-0 group-hover:opacity-100 transition text-[11px] text-gray-500 hover:text-cyan-400 pr-1"
+                      className="text-[11px] text-gray-500 hover:text-cyan-400 transition pr-1"
                       title="Copiar mensaje"
                     >
                       {copiedId === i ? '✓ Copiado' : '⧉ Copiar'}
