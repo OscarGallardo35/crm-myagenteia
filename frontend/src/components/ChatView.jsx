@@ -23,7 +23,7 @@ const useIsMobile = () => {
   return mobile;
 };
 
-const ChatView = () => {
+const ChatView = ({ initialSession }) => {
   const isMobile = useIsMobile();
   const [sidebarOpen, setSidebarOpen] = useState(!isMobile);
 
@@ -105,6 +105,17 @@ const ChatView = () => {
       .finally(() => { if (activeFlag) setLoadingInit(false); });
     return () => { activeFlag = false; };
   }, []);
+
+  // Abrir una sesión específica si viene del panel Agentes (initialSession)
+  useEffect(() => {
+    if (initialSession && initialSession.id) {
+      if (!hermesSessions.some(s => (s.id || s.session_id) === initialSession.id)) {
+        setHermesSessions(prev => [{ id: initialSession.id, session_id: initialSession.id, title: initialSession.title, message_count: 0, last_activity_display: '' }, ...prev]);
+      }
+      selectSession('hermes', initialSession.id, initialSession.title);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialSession && initialSession.id]);
 
   const loadMessages = useCallback(async (type, id) => {
     setLoadingMsgs(true);

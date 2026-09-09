@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import Sidebar from './components/Sidebar';
 import ChatView from './components/ChatView';
@@ -10,16 +10,17 @@ import SecurityPanel from './components/SecurityPanel';
 import Login from './components/Login';
 
 const VIEWS = {
-  chat: { label: 'Chats', icon: '💬', Component: ChatView },
-  dashboard: { label: 'Dashboard', icon: '📊', Component: Dashboard },
-  leads: { label: 'Leads', icon: '🎯', Component: LeadsBoard },
-  calendar: { label: 'Calendario', icon: '📅', Component: PostingCalendar },
-  agents: { label: 'Agentes', icon: '🤖', Component: AgentsPanel },
-  security: { label: 'Seguridad', icon: '🔒', Component: SecurityPanel },
+  chat: { key: 'chat', label: 'Chats', icon: '💬', Component: ChatView },
+  dashboard: { key: 'dashboard', label: 'Dashboard', icon: '📊', Component: Dashboard },
+  leads: { key: 'leads', label: 'Leads', icon: '🎯', Component: LeadsBoard },
+  calendar: { key: 'calendar', label: 'Calendario', icon: '📅', Component: PostingCalendar },
+  agents: { key: 'agents', label: 'Agentes', icon: '🤖', Component: AgentsPanel },
+  security: { key: 'security', label: 'Seguridad', icon: '🔒', Component: SecurityPanel },
 };
 
 function AppShell() {
   const [activeView, setActiveView] = useState('chat');
+  const [openSession, setOpenSession] = useState(null);
   const { user, loading, isAuthenticated } = useAuth();
 
   if (loading) {
@@ -37,6 +38,12 @@ function AppShell() {
   const viewInfo = VIEWS[activeView] || VIEWS.chat;
   const ViewComponent = viewInfo.Component;
 
+  // Abrir una sesión persistente en el chat (desde el panel Agentes)
+  const handleOpenSession = useCallback((sessionId, title) => {
+    setOpenSession({ id: sessionId, title });
+    setActiveView('chat');
+  }, []);
+
   return (
     <div className="flex h-screen bg-gray-900 text-gray-100 overflow-hidden">
       <Sidebar activeView={activeView} onViewChange={setActiveView} userId={user?.id} />
@@ -45,7 +52,11 @@ function AppShell() {
           <h2 className="text-lg font-semibold text-white">{viewInfo.label}</h2>
         </header>
         <div className="flex-1 overflow-y-auto p-4">
-          <ViewComponent />
+          {viewInfo.key === 'chat'
+            ? <ChatView key={openSession ? `sess-${openSession.id}` : 'chat'} initialSession={openSession} />
+            : viewInfo.key === 'agents'
+              ? <AgentsPanel onOpenSession={handleOpenSession} />
+              : <ViewComponent />}
         </div>
       </main>
     </div>
