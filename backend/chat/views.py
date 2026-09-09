@@ -386,6 +386,11 @@ def _extract_artifacts(content):
 def _run_agent_background(user_id, conversation_pk, user_content, requested_model):
     """Ejecuta el turno del agente Hermes en un hilo. Guarda la respuesta del
     assistant en la conversación cuando termina."""
+    # Si el mensaje lleva imagen (user_content es lista multimodal), la sesión debe
+    # usar el modelo VISION para leerla (deepseek-v4-flash-vision-exp).
+    vision_model = 'deepseek/deepseek-v4-flash-vision-exp'
+    if isinstance(user_content, list):
+        requested_model = vision_model
     try:
         asst = _ask_hermes(user_id, conversation_pk, user_content, requested_model)
     except Exception:
@@ -701,8 +706,14 @@ def _ask_proxy_nous(user_id, conversation_pk, user_content, requested_model=None
 # ---- Multimedia: preparación de contenido y upload ----
 
 def _prepare_user_content(message):
-    """Convierte un Message (texto + attachments) en el texto que el agente procesa."""
+    """Convierte un Message (texto + attachments) en el input que el agente procesa.
+    Devuelve un string, o una lista de partes OpenAI-style (texto + imagen data URL)
+    cuando hay imágenes adjuntas y la sesión es vision-capable. Audio/documentos se
+    convierten a texto (transcripción/extracción); imágenes NO se hacen OCR local sino
+    que se pasan al modelo vision."""
     parts = []
+    image_parts = []
+    has_image = False
     if message.content:
         parts.append(message.content)
     for att in (message.attachments or []):
@@ -722,10 +733,30 @@ def _prepare_user_content(message):
             text = extract_document_text(file_path, att.get('mime', ''))
             parts.append(f"[Documento: {att_name}]\n{text}" if text else f"[Documento: {att_name}]")
         elif att_type == 'image':
-            from chat.extractors import ocr_image
-            text = ocr_image(file_path)
-            parts.append(f"[Imagen: {att_name}]\n{text}" if text else f"[Imagen: {att_name}]")
-    return "\n\n".join(parts)
+            has_image = True
+            # pasar imagen al modelo vision como data URL (el OCR lo hace el modelo)
+            image_parts.append(image_to_data_url(file_path))
+    text_content = "\n\n".join(parts)
+    if has_image and image_parts:
+        content = [{"type": "text", "text": text_content or "Mirá esta imagen"}]
+        for iu in image_parts:
+            content.append({"type": "image_url", "image_url": {"url": iu}})
+        return content
+    return text_content
+
+
+def image_to_data_url(file_path):
+    """Convierte una imagen a data URL base64 para pasarla al modelo vision."""
+    import base64
+    ext = os.path.splitext(file_path)[1].lower().lstrip('.') or 'png'
+    mime = {'jpg': 'jpeg', 'jpeg': 'jpeg', 'png': 'png', 'webp': 'webp', 'gif': 'gif',
+            'bmp': 'bmp', 'svg': 'svg'}.get(ext, ext)
+    try:
+        with open(file_path, 'rb') as f:
+            b64 = base64.b64encode(f.read()).decode()
+        return f"data:image/{mime};base64,{b64}"
+    except Exception:
+        return ''
 
 
 @api_view(['POST'])
