@@ -153,6 +153,8 @@ const ChatView = () => {
     e.preventDefault();
     const text = input.trim();
     if (!text || !active || active.type !== 'crm') return;
+    // longitud esperada tras agregar el mensaje del usuario (para esperar UNA respuesta nueva)
+    const baseLen = messages.length + 1;
     setInput('');
     setMessages((prev) => [...prev, { role: 'user', content: text }]);
     setAgentWorking(true);
@@ -168,7 +170,7 @@ const ChatView = () => {
           : c));
         // el agente corre en background -> hacer polling hasta que aparezca la respuesta
         if (data.agent_pending) {
-          pollForAssistant(active.id, text);
+          pollForAssistant(active.id, baseLen);
         } else if (data.assistant_message) {
           setMessages((prev) => [...prev, data.assistant_message]);
           setCrmConvos((prev) => prev.map(c => c.id === active.id
@@ -181,7 +183,7 @@ const ChatView = () => {
   }, [input, active, model]);
 
   // ---- Polling: consulta la conversación hasta que Hermes termine ----
-  const pollForAssistant = useCallback(async (cid, userText) => {
+  const pollForAssistant = useCallback(async (cid, baseLen) => {
     const deadline = Date.now() + 15 * 60 * 1000; // máx 15 min
     let running = true;
     const tick = async () => {
@@ -191,12 +193,13 @@ const ChatView = () => {
         const data = await api.getCrmConversation(cid);
         if (data && data.ok) {
           const msgs = data.messages || [];
-          const assistantCount = msgs.filter(m => m.role === 'assistant').length;
-          if (assistantCount > 0) {
-            // ya está la respuesta -> reemplazar el estado con lo persistido
+          // esperar UNA respuesta nueva: que el nº de mensajes supere el baseLen
+          // (baseLen = mensajes existentes + el user enviado). Evita que un historial
+          // con respuestas previas apague la burbuja prematuramente.
+          if (msgs.length > baseLen) {
             setMessages(msgs);
             setCrmConvos((prev) => prev.map(c => c.id === cid
-              ? { ...c, preview: userText.slice(0, 80), message_count: msgs.length }
+              ? { ...c, preview: (msgs[msgs.length - 1]?.content || '').slice(0, 80), message_count: msgs.length }
               : c));
             setAgentWorking(false);
             return;
