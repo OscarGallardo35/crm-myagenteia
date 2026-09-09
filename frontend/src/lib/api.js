@@ -157,11 +157,11 @@ export const api = {
       body: JSON.stringify({ title }),
     });
   },
-  addCrmMessage: async (id, role, content) => {
+  addCrmMessage: async (id, role, content, model) => {
     return fetchWithAuth(`${API_BASE_URL}/conversations/${id}/message/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ role, content }),
+      body: JSON.stringify({ role, content, model: model || undefined }),
     });
   },
 };

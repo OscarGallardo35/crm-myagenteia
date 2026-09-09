@@ -240,7 +240,7 @@ def crm_conversation_message(request, pk):
 
     # Si es un mensaje de usuario, pedir respuesta a Hermes (proxy de fondo)
     if role in ('user', 'human'):
-        asst = _ask_hermes(request, pk, content)
+        asst = _ask_hermes(request, pk, content, request.data.get('model') or None)
         if asst is not None:
             am = Message.objects.create(conversation=c, role='assistant', content=asst)
             c.save()
@@ -254,10 +254,17 @@ def crm_conversation_message(request, pk):
     return Response(response_data, status=201)
 
 
-def _ask_hermes(request, conversation_pk, user_content):
+def _ask_hermes(request, conversation_pk, user_content, requested_model=None):
     """Envía el contexto de la conversación al proxy Hermes y devuelve la respuesta."""
     proxy_url = os.environ.get('HERMES_PROXY_URL', '').rstrip('/')
-    model = os.environ.get('HERMES_PROXY_MODEL', 'meituan/longcat-2.0:free')
+    default_model = os.environ.get('HERMES_PROXY_MODEL', 'meituan/longcat-2.0:free')
+    # El modelo elegido en el selector manda; si viene vacío o raro, usar default.
+    model = requested_model if requested_model else default_model
+
+    # Los modelos de razonamiento (laguna, ling, step) necesitan más tokens para emitir content.
+    reasoning_models = ('laguna', 'ling', 'step')
+    max_tokens = 1600 if any(k in model for k in reasoning_models) else 800
+
     if not proxy_url:
         return None
     try:
@@ -282,8 +289,12 @@ def _ask_hermes(request, conversation_pk, user_content):
         resp = client.chat.completions.create(
             model=model,
             messages=messages_payload,
-            max_tokens=800,
+            max_tokens=max_tokens,
         )
-        return resp.choices[0].message.content
+        content = resp.choices[0].message.content
+        # Los de razonamiento a veces dejan content=None y ponen todo en reasoning
+        if not content and getattr(resp.choices[0].message, 'reasoning', None):
+            content = resp.choices[0].message.reasoning[-2000:]
+        return content
     except Exception:
         return None

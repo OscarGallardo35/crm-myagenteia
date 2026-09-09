@@ -125,7 +125,8 @@ const ChatView = () => {
     setLoadingMsgs(true);
     setError('');
     try {
-      const data = await api.addCrmMessage(active.id, 'user', text);
+      const chosenModel = model || 'meituan/longcat-2.0:free';
+      const data = await api.addCrmMessage(active.id, 'user', text, chosenModel);
       setInput('');
       if (data && data.ok) {
         const newMsgs = [data.message];
