@@ -48,17 +48,58 @@ function ArtifactCard({ artifact }) {
     } catch (e) { /* ignore */ }
   };
 
+  // Deriva nombre de archivo + extensión según el tipo
+  const LANG_EXT = { python: 'py', javascript: 'js', typescript: 'ts', java: 'java', c: 'c', cpp: 'cpp', 'c++': 'cpp', go: 'go', rust: 'rs', ruby: 'rb', php: 'php', bash: 'sh', shell: 'sh', sh: 'sh', sql: 'sql', json: 'json', yaml: 'yaml', yml: 'yml', xml: 'xml', css: 'css', html: 'html', jsx: 'jsx', tsx: 'tsx', markdown: 'md', md: 'md' };
+  const extFor = (t, l) => {
+    if (t === 'code' && l) return LANG_EXT[l.toLowerCase()] || l.replace(/[^a-z0-9]/gi, '') || 'txt';
+    const map = {
+      code: 'txt', mermaid: 'mmd', markdown: 'md', md: 'md',
+      txt: 'txt', text: 'txt', html: 'html', svg: 'svg',
+    };
+    return map[t] || 'txt';
+  };
+  const mimeFor = (t) => {
+    const map = { svg: 'image/svg+xml', html: 'text/html', markdown: 'text/markdown', md: 'text/markdown', mermaid: 'text/plain', code: 'text/plain', txt: 'text/plain' };
+    return map[t] || 'text/plain';
+  };
+
+  const download = () => {
+    try {
+      const base = (title || '').replace(/\.[a-z0-9]+$/i, '') || 'artefacto';
+      const safe = base.replace(/[^a-z0-9-_ ]/gi, '_').replace(/\s+/g, '_').slice(0, 60) || 'artefacto';
+      const ext = extFor(type, lang);
+      const blob = new Blob([content], { type: mimeFor(type) + ';charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${safe}.${ext}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (e) { /* ignore */ }
+  };
+
+  const btnBase = 'flex items-center gap-1 text-[11px] text-gray-500 hover:text-cyan-400 transition px-1.5 py-0.5';
+
   const header = (
     <div className="flex items-center justify-between px-3 py-1.5 bg-gray-800 border-b border-gray-700 rounded-t-lg">
       <span className="text-[11px] font-medium text-gray-400 truncate">
         {title}{lang ? ` · ${lang}` : ''}
       </span>
-      <button
-        onClick={copy}
-        className="text-[11px] text-gray-500 hover:text-cyan-400 transition px-1 py-0.5"
-      >
-        {copied ? '✓ Copiado' : '⧉ Copiar'}
-      </button>
+      <div className="flex items-center gap-0.5 shrink-0">
+        <button onClick={download} className={btnBase} title="Descargar archivo">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" />
+            <line x1="12" y1="15" x2="12" y2="3" />
+          </svg>
+          Descargar
+        </button>
+        <button onClick={copy} className={btnBase} title="Copiar contenido">
+          {copied ? '✓ Copiado' : '⧉ Copiar'}
+        </button>
+      </div>
     </div>
   );
 
