@@ -35,7 +35,9 @@ const ChatView = ({ initialSession }) => {
   const [messages, setMessages] = useState([]);
   const [activeTitle, setActiveTitle] = useState('');
 
-  const [model, setModel] = useState('');
+  const [model, setModel] = useState(() => {
+    try { return localStorage.getItem('crm_chat_model') || ''; } catch { return ''; }
+  });
   const [loadingInit, setLoadingInit] = useState(true);
   const [loadingMsgs, setLoadingMsgs] = useState(false);
   // Conversaciones con turno del agente EN CURSO (permiten trabajar en otras libres)
@@ -125,6 +127,11 @@ const ChatView = ({ initialSession }) => {
         ? await api.getHermesSessionMessages(id)
         : await api.getCrmConversation(id);
       setMessages(data && data.ok ? (data.messages || []) : []);
+      // Restaurar el modelo guardado de la conversación CRM (no pisar con vacío:
+      // si la conversación no tiene modelo, se mantiene la selección actual).
+      if (data && data.ok && data.conversation && data.conversation.model) {
+        setModel(data.conversation.model);
+      }
     } catch {
       setMessages([]);
     } finally {
@@ -160,6 +167,8 @@ const ChatView = ({ initialSession }) => {
   // ---- Cambiar modelo (aplica el session model lock al instante) ----
   const handleModelChange = useCallback(async (newModel) => {
     setModel(newModel);
+    // persistir la selección para sobrevivir el desmontaje al navegar (Dashboard/Leads/…)
+    try { localStorage.setItem('crm_chat_model', newModel); } catch { /* no crítico */ }
     // si hay una conversación CRM activa, cambia el modelo de su sesión de agente
     if (active && active.type === 'crm') {
       try {

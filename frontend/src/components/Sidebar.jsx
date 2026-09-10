@@ -9,6 +9,7 @@ const Sidebar = ({ activeView, onViewChange }) => {
     { key: 'leads', label: 'Leads', icon: '🎯' },
     { key: 'calendar', label: 'Calendario', icon: '📅' },
     { key: 'agents', label: 'Agentes', icon: '🤖' },
+    { key: 'studioInbox', label: 'Bandeja Studio', icon: '🗨️' },
     { key: 'security', label: 'Seguridad', icon: '🔒' },
   ];
 

@@ -7,6 +7,7 @@ import LeadsBoard from './components/LeadsBoard';
 import PostingCalendar from './components/PostingCalendar';
 import AgentsPanel from './components/AgentsPanel';
 import SecurityPanel from './components/SecurityPanel';
+import StudioInboxView from './components/StudioInboxView';
 import Login from './components/Login';
 
 const VIEWS = {
@@ -15,6 +16,7 @@ const VIEWS = {
   leads: { key: 'leads', label: 'Leads', icon: '🎯', Component: LeadsBoard },
   calendar: { key: 'calendar', label: 'Calendario', icon: '📅', Component: PostingCalendar },
   agents: { key: 'agents', label: 'Agentes', icon: '🤖', Component: AgentsPanel },
+  studioInbox: { key: 'studioInbox', label: 'Bandeja Studio', icon: '🗨️', Component: StudioInboxView },
   security: { key: 'security', label: 'Seguridad', icon: '🔒', Component: SecurityPanel },
 };
 

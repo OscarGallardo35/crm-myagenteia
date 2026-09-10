@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '../lib/api';
 
 const TABS = [
@@ -6,6 +6,11 @@ const TABS = [
   { key: 'tasks', label: 'Tareas', icon: '📋' },
   { key: 'sessions', label: 'Sesiones persistentes', icon: '🧠' },
 ];
+
+// Cada cuánto refrescar el tab activo (el transcript de los sub-agentes es
+// append-only: se re-lee del endpoint mientras el sub-agente trabaja).
+const LIVE_POLL_MS = 3000;
+const TASKS_POLL_MS = 5000;
 
 function StatusBadge({ status }) {
   const map = {
@@ -29,6 +34,8 @@ const AgentsPanel = ({ onOpenSession }) => {
   // Nivel 1
   const [liveAgents, setLiveAgents] = useState([]);
   const [expanded, setExpanded] = useState(null);
+  const [liveDetail, setLiveDetail] = useState(null);   // transcript_full del agente expandido
+  const [updatedAt, setUpdatedAt] = useState(null);       // última actualización en vivo
 
   // Nivel 2
   const [tasks, setTasks] = useState([]);
@@ -39,12 +46,26 @@ const AgentsPanel = ({ onOpenSession }) => {
   // Nivel 3
   const [sessions, setSessions] = useState([]);
 
+  // ref para que el polling lea el id expandido sin closures obsoletos
+  const expandedRef = useRef(null);
+  useEffect(() => { expandedRef.current = expanded; }, [expanded]);
+
+  const fetchLiveDetail = useCallback(async (id) => {
+    if (!id) return;
+    try {
+      const det = await api.getLiveAgentDetail(id);
+      if (det?.ok && det.agent) setLiveDetail(det.agent);
+    } catch { /* detalle opcional: la lista ya trae transcript parcial */ }
+  }, []);
+
   const load = useCallback(async (t) => {
     setLoading(true); setError('');
     try {
       if (t === 'live') {
         const d = await api.getLiveAgents();
         setLiveAgents(d?.agents || []);
+        setUpdatedAt(new Date());
+        if (expandedRef.current) fetchLiveDetail(expandedRef.current);
       } else if (t === 'tasks') {
         const d = await api.getAgentTasks();
         setTasks(d?.tasks || []);
@@ -54,9 +75,42 @@ const AgentsPanel = ({ onOpenSession }) => {
       }
     } catch (e) { setError('Error al cargar agentes'); }
     finally { setLoading(false); }
-  }, []);
+  }, [fetchLiveDetail]);
 
   useEffect(() => { load(tab); }, [tab, load]);
+
+  // ---- Polling en vivo: refresca el tab activo mientras está montado ----
+  useEffect(() => {
+    if (tab !== 'live') return undefined;
+    let alive = true;
+    const tick = async () => {
+      try {
+        const d = await api.getLiveAgents();
+        if (!alive) return;
+        setLiveAgents(d?.agents || []);
+        setUpdatedAt(new Date());
+        if (expandedRef.current) {
+          const det = await api.getLiveAgentDetail(expandedRef.current);
+          if (alive && det?.ok && det.agent) setLiveDetail(det.agent);
+        }
+      } catch { /* se reintenta en el siguiente tick */ }
+    };
+    const iv = setInterval(tick, LIVE_POLL_MS);
+    return () => { alive = false; clearInterval(iv); };
+  }, [tab]);
+
+  useEffect(() => {
+    if (tab !== 'tasks') return undefined;
+    let alive = true;
+    const tick = async () => {
+      try {
+        const d = await api.getAgentTasks();
+        if (alive) setTasks(d?.tasks || []);
+      } catch { /* noop */ }
+    };
+    const iv = setInterval(tick, TASKS_POLL_MS);
+    return () => { alive = false; clearInterval(iv); };
+  }, [tab]);
 
   const launchTask = async () => {
     if (!launchGoal.trim()) return;
@@ -86,9 +140,10 @@ const AgentsPanel = ({ onOpenSession }) => {
   };
 
   const toggleExpand = async (id) => {
-    if (expanded === id) { setExpanded(null); return; }
+    if (expanded === id) { setExpanded(null); setLiveDetail(null); return; }
     setExpanded(id);
-    try { await api.getLiveAgentDetail(id); } catch {}
+    setLiveDetail(null);
+    fetchLiveDetail(id);
   };
 
   return (
@@ -117,11 +172,22 @@ const AgentsPanel = ({ onOpenSession }) => {
           {/* Nivel 1: Observabilidad */}
           {tab === 'live' && (
             <div className="space-y-2">
+              <div className="flex items-center gap-2 text-[11px] text-gray-500">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-500"></span>
+                </span>
+                <span>En vivo — se actualiza cada {LIVE_POLL_MS / 1000}s{updatedAt ? ` · ${updatedAt.toLocaleTimeString()}` : ''}</span>
+              </div>
               {liveAgents.length === 0 ? (
                 <div className="bg-gray-800/40 border border-gray-700 rounded-xl p-6 text-center text-gray-500 text-sm">
                   No hay sub-agentes activos ahora. Se listan cuando el orquestador los dispara.
                 </div>
-              ) : liveAgents.map(a => (
+              ) : liveAgents.map(a => {
+                const isOpen = expanded === a.id;
+                const shown = (isOpen && liveDetail && liveDetail.id === a.id) ? liveDetail : a;
+                const transcript = shown.transcript_full || shown.transcript || [];
+                return (
                 <div key={a.id} className="bg-gray-800/40 border border-gray-700 rounded-xl">
                   <div onClick={() => toggleExpand(a.id)} className="flex flex-wrap items-center gap-3 p-3 cursor-pointer hover:bg-gray-800/60 transition">
                     <StatusBadge status={a.status} />
@@ -130,18 +196,25 @@ const AgentsPanel = ({ onOpenSession }) => {
                     <span className="text-[11px] text-gray-500 ml-auto">{a.started || ''}</span>
                     <span className="text-xs text-gray-500">{a.task_count} tarea{a.task_count !== 1 ? 's' : ''}</span>
                   </div>
-                  {expanded === a.id && (
+                  {a.last_text && !isOpen && (
+                    <div className="px-3 pb-2 -mt-1">
+                      <p className="text-[11px] text-gray-500 truncate">↳ {a.last_text}</p>
+                    </div>
+                  )}
+                  {isOpen && (
                     <div className="px-3 pb-3 space-y-1">
-                      <p className="text-xs text-gray-400">{a.last_text || a.transcript?.[a.transcript.length-1]?.text || ''}</p>
+                      <p className="text-xs text-gray-400">{shown.last_text || transcript?.[transcript.length-1]?.text || ''}</p>
                       <div className="text-[11px] font-mono text-gray-500 max-h-64 overflow-y-auto bg-gray-900/60 rounded-lg p-2 space-y-0.5">
-                        {(a.transcript || []).map((l, i) => (
+                        {transcript.length === 0 ? (
+                          <div className="text-gray-600">Sin líneas de transcript todavía…</div>
+                        ) : transcript.map((l, i) => (
                           <div key={i}><span className="text-gray-600">{l.time}</span> <span className="text-cyan-400">{l.role}</span> <span className="text-gray-400">{l.text}</span></div>
                         ))}
                       </div>
                     </div>
                   )}
                 </div>
-              ))}
+              );})}
             </div>
           )}
 
