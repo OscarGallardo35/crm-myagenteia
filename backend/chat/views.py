@@ -382,32 +382,40 @@ def _fetch_bb_calendar(base_url, api_key):
 
 @api_view(['GET'])
 def scheduled_list(request):
-    """Calendario Editorial — posts programados.
+    """Calendario Editorial — combina lo del CRM y lo de BrightBean Studio.
 
-    Fuente principal: BrightBean Studio (studio.mercadodigital.pro), que es
-    quien publica. Si BrightBean no está configurado o no responde, cae a
-    los posts programados locales del CRM.
+    Devuelve en una sola lista los posts programados locales del CRM más los
+    de BrightBean (studio.mercadodigital.pro, que es quien publica). Cada fila
+    lleva ``source`` ('crm' | 'bb') para poder distinguirlas en el front.
     """
+    rows = []
+
+    # --- 1) Posts programados locales del CRM -----------------------------
+    local_ids = set(ScheduledPost.objects.values_list('post_id', flat=True))
+    posts = (
+        Post.objects.filter(dj_models.Q(scheduled_at__isnull=False) | dj_models.Q(id__in=local_ids))
+        .order_by('scheduled_at')
+    )
+    for p in posts:
+        rows.append({
+            'id': p.id,
+            'title': p.title or '',
+            'platform': p.platform or '',
+            'status': p.status or '',
+            'scheduled_at': p.scheduled_at.isoformat() if p.scheduled_at else None,
+            'source': 'crm',
+        })
+
+    # --- 2) Posts de BrightBean Studio ------------------------------------
     bb_url = getattr(settings, 'BB_STUDIO_API_URL', '') or ''
     bb_key = getattr(settings, 'BB_STUDIO_API_KEY', '') or ''
     if bb_url and bb_key:
-        rows = _fetch_bb_calendar(bb_url, bb_key)
-        if rows is not None:
-            return Response(rows)
+        bb_rows = _fetch_bb_calendar(bb_url, bb_key) or []
+        for r in bb_rows:
+            r['source'] = 'bb'
+        rows.extend(bb_rows)
 
-    scheduled = ScheduledPost.objects.select_related('post').all().order_by('-created_at')
-    data = [
-        {
-            'id': s.id,
-            'title': (s.post.title if s.post_id else ''),
-            'platform': (s.post.platform if s.post_id else ''),
-            'status': (s.post.status if s.post_id else ''),
-            'scheduled_at': (s.post.scheduled_at.isoformat()
-                             if s.post_id and s.post.scheduled_at else None),
-        }
-        for s in scheduled
-    ]
-    return Response(data)
+    return Response(rows)
 
 
 @api_view(['GET'])
