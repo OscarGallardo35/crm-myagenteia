@@ -16,12 +16,15 @@ from chat.serializers import (
     LeadSerializer, DealSerializer,
     PostSerializer, ScheduledPostSerializer
 )
+import logging
 import os
 import sys
 import json
 from openai import OpenAI
 import uuid
 from urllib.parse import urljoin
+
+logger = logging.getLogger(__name__)
 
 # Gateway (api_server de Hermes) — chat de sesión no-stream
 _GW = os.environ.get('HERMES_GATEWAY_URL', '').rstrip('/')  # http://10.0.3.1:8642/v1
@@ -334,11 +337,76 @@ def posts_list(request):
     return Response(data)
 
 
+def _fetch_bb_calendar(base_url, api_key):
+    """Trae el calendario editorial de BrightBean Studio.
+
+    Consulta ``GET {base}/posts/`` de su Agent API y aplana cada
+    ``PlatformPost`` a una fila con el formato que consume el front
+    (``scheduled_at`` / ``platform`` / ``status``). Devuelve ``None`` ante
+    cualquier fallo (red, timeout, 4xx/5xx, JSON inválido) para que el
+    caller pueda caer al dato local en lugar de romper el calendario.
+    """
+    import urllib.request
+
+    url = f"{base_url}/posts/?limit=500"
+    req = urllib.request.Request(
+        url,
+        headers={
+            'Authorization': f'Bearer {api_key}',
+            'Accept': 'application/json',
+            # Cloudflare (delante de studio.mercadodigital.pro) responde 403 al
+            # User-Agent por defecto de urllib; hay que mandar uno propio.
+            'User-Agent': 'MyAgenteIA-CRM/1.0 (+calendario)',
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            posts = json.loads(resp.read().decode('utf-8'))
+    except Exception as exc:  # red, timeout, HTTP error, JSON inválido
+        logger.warning("BrightBean calendar fetch failed (%s): %s", url, exc)
+        return None
+
+    rows = []
+    for post in posts or []:
+        children = post.get('platform_posts') or []
+        for pp in children:
+            rows.append({
+                'id': pp.get('id') or post.get('id'),
+                'title': (post.get('caption') or '')[:120],
+                'platform': pp.get('platform', ''),
+                'status': pp.get('status') or post.get('status', ''),
+                'scheduled_at': pp.get('scheduled_at') or post.get('scheduled_at'),
+            })
+    return rows
+
+
 @api_view(['GET'])
 def scheduled_list(request):
-    """Lista de posts programados"""
-    scheduled = ScheduledPost.objects.all().order_by('-created_at')
-    data = [{'id': s.id, 'title': s.title, 'scheduled_at': str(s.scheduled_at)} for s in scheduled]
+    """Calendario Editorial — posts programados.
+
+    Fuente principal: BrightBean Studio (studio.mercadodigital.pro), que es
+    quien publica. Si BrightBean no está configurado o no responde, cae a
+    los posts programados locales del CRM.
+    """
+    bb_url = getattr(settings, 'BB_STUDIO_API_URL', '') or ''
+    bb_key = getattr(settings, 'BB_STUDIO_API_KEY', '') or ''
+    if bb_url and bb_key:
+        rows = _fetch_bb_calendar(bb_url, bb_key)
+        if rows is not None:
+            return Response(rows)
+
+    scheduled = ScheduledPost.objects.select_related('post').all().order_by('-created_at')
+    data = [
+        {
+            'id': s.id,
+            'title': (s.post.title if s.post_id else ''),
+            'platform': (s.post.platform if s.post_id else ''),
+            'status': (s.post.status if s.post_id else ''),
+            'scheduled_at': (s.post.scheduled_at.isoformat()
+                             if s.post_id and s.post.scheduled_at else None),
+        }
+        for s in scheduled
+    ]
     return Response(data)
 
 

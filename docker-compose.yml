@@ -51,6 +51,9 @@ services:
       HERMES_GATEWAY_URL: http://10.0.3.1:8642/v1
       HERMES_GATEWAY_MODEL: ""
       HERMES_ENV_FILE: /hermes/.env
+      # Calendario Editorial — fuente: BrightBean Studio (studio.mercadodigital.pro)
+      BB_STUDIO_API_URL: https://studio.mercadodigital.pro/api/v1
+      BB_STUDIO_API_KEY: ${BB_STUDIO_API_KEY:-}
     healthcheck:
       test: ["CMD", "curl", "-f", "-L", "http://localhost:8000/api/"]
       interval: 15s

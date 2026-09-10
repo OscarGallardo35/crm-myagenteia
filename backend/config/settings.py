@@ -115,6 +115,11 @@ HERMES_ROOT = os.environ.get('HERMES_STATE_DB', '/hermes/state.db').replace('/st
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+# BrightBean Studio (studio.mercadodigital.pro) — fuente del Calendario Editorial.
+# El backend consulta su Agent API server-side con una key bb_studio_.
+BB_STUDIO_API_URL = os.environ.get('BB_STUDIO_API_URL', '').rstrip('/')
+BB_STUDIO_API_KEY = os.environ.get('BB_STUDIO_API_KEY', '')
+
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'auth_backend.authentication.UserTokenAuthentication',
